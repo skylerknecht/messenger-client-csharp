@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Text.Json;
 using System.Net.Sockets;
 using System.Net;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace MessengerClient
 {
@@ -18,8 +19,7 @@ namespace MessengerClient
                 try
                 {
                     await ws.ConnectAsync(new Uri(uri), CancellationToken.None);
-                    Task receiveTask = Task.Run(async () => await ReceiveMessages(ws));
-                    await receiveTask;
+                    await ReceiveMessages(ws);
                 }
                 catch (Exception e)
                 {
@@ -58,72 +58,69 @@ namespace MessengerClient
                     Console.WriteLine("WebSocket server requested closure.");
                     break;
                 }
-                HandleMessege(ws, completeMessage.ToString());
+                _ = HandleMessege(ws, completeMessage.ToString());
             }
         }
 
-        private void HandleMessege(ClientWebSocket ws, string completeMessege)
+        private async Task HandleMessege(ClientWebSocket ws, string completeMessege)
         {
             Message msg = JsonSerializer.Deserialize<Message>(completeMessege);
+            Console.WriteLine(completeMessege);
 
-            if (clients.TryGetValue(msg.identifier, out Socket client))
+            if (clients.TryGetValue(msg.identifier, out TcpClient client))
             {
-                client.Send(Base64ToBytes(msg.msg));
+                NetworkStream stream = client.GetStream();
+                stream.Write(Base64ToBytes(msg.msg));
             }
             else
             {
-                SocksConnect(ws, completeMessege);
+                await SocksConnect(ws, completeMessege);
             }
         }
 
-        private void SocksConnect(ClientWebSocket ws, string socksConnectRequest)
+        private async Task SocksConnect(ClientWebSocket ws, string socksConnectRequest)
         {
-            Socket client = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            TcpClient client = new TcpClient();
             var request = JsonSerializer.Deserialize<SocksConnectRequest>(socksConnectRequest);
             ArraySegment<byte> socksConnectResults = new ArraySegment<byte> { };
             SocketAsyncEventArgs connectEventArgs = new SocketAsyncEventArgs();
-            connectEventArgs.RemoteEndPoint = new DnsEndPoint(request.address, request.port);
-            connectEventArgs.Completed += (sender, args) =>
+            try
             {
-                if (args.SocketError == SocketError.Success)
-                {
-                    clients.Add(request.identifier, client);
-
-                    string bindAddr = ((IPEndPoint)client.LocalEndPoint).Address.ToString();
-                    int bindPort = ((IPEndPoint)client.LocalEndPoint).Port;
-
-
-                    socksConnectResults = SocksConnectResults(request.identifier, 0, bindAddr, bindPort);
-
-                    ws.SendAsync(socksConnectResults, WebSocketMessageType.Text, true, CancellationToken.None);
-                    Stream(ws, request.identifier, client);
-                }
-                else
-                {
-                    socksConnectResults = SocksConnectResults(request.identifier, 1, null, 0);
-                    ws.SendAsync(socksConnectResults, WebSocketMessageType.Text, true, CancellationToken.None);
-                }
-            };
-            client.ConnectAsync(connectEventArgs);
-
+                await client.ConnectAsync(request.address, request.port);
+                IPEndPoint localEndPoint = client.Client.LocalEndPoint as IPEndPoint;
+                string bindAddr = localEndPoint.Address.ToString();
+                int bindPort = localEndPoint.Port;
+                socksConnectResults = SocksConnectResults(request.identifier, 0, bindAddr, bindPort);
+                clients[request.identifier] = client;
+                await ws.SendAsync(socksConnectResults, WebSocketMessageType.Text, true, CancellationToken.None);
+                await Stream(ws, request.identifier, client);
+            }
+            catch (Exception ex)
+            {
+                socksConnectResults = SocksConnectResults(request.identifier, 1, null, 0);
+                await ws.SendAsync(socksConnectResults, WebSocketMessageType.Text, true, CancellationToken.None);
+            }
         }
 
-        public void Stream(ClientWebSocket ws, string identifier, Socket client)
+        public async Task Stream(ClientWebSocket ws, string identifier, TcpClient client)
         {
-            byte[] downstream_data = new byte[4096];
-            SocketAsyncEventArgs e = new SocketAsyncEventArgs();
-            e.SetBuffer(downstream_data, 0, downstream_data.Length);
-            e.Completed += async(sender2, args2) =>
+            NetworkStream stream = client.GetStream();
+            while (true)
             {
-                if (e.SocketError == SocketError.Success && e.BytesTransferred > 0)
+                byte[] buffer = new byte[4096];
+                int bytesRead = stream.Read(buffer, 0, buffer.Length);
+
+                if (bytesRead == 0)
                 {
-                    byte[] data = new byte[e.BytesTransferred];
-                    Array.Copy(e.Buffer, data, e.BytesTransferred);
-                    await ws.SendAsync(GenerateDownstreamMessege(identifier, data), WebSocketMessageType.Text, true, CancellationToken.None);
-                    client.ReceiveAsync(e);
+                    break;
                 }
-            };
-            client.ReceiveAsync(e);
+
+
+                byte[] data = new byte[bytesRead];
+                Array.Copy(buffer, data, bytesRead);
+                await ws.SendAsync(GenerateDownstreamMessege(identifier, data), WebSocketMessageType.Text, true, CancellationToken.None);
+            }
+            stream.Close();
         }
     }
 }

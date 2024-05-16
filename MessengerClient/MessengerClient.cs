@@ -14,7 +14,7 @@ namespace MessengerClient
 {
     internal abstract class MessengerClient
     {
-        public Dictionary<string, Socket> clients = new Dictionary<string, Socket>();
+        public Dictionary<string, TcpClient> clients = new Dictionary<string, TcpClient>();
         public readonly int bufferSize = 4096;
 
         public abstract Task Connect(string uri);
@@ -75,8 +75,6 @@ namespace MessengerClient
             fullMessage.AddRange(message);
             fullMessage.AddRange(bindAddressBytes);
             fullMessage.AddRange(bindPortBytes);
-            Console.WriteLine($"{identifier} {rep} {bindAddr} {bindPort}");
-            Console.WriteLine(BitConverter.ToString(fullMessage.ToArray()));
             return GenerateDownstreamMessege(identifier, fullMessage.ToArray());
         }
     }
