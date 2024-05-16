@@ -64,12 +64,12 @@ namespace MessengerClient
         private async Task HandleMessege(ClientWebSocket ws, string completeMessege)
         {
             Message msg = JsonSerializer.Deserialize<Message>(completeMessege);
-            Console.WriteLine(completeMessege);
-
+            //Console.WriteLine(completeMessege);
             if (clients.TryGetValue(msg.identifier, out TcpClient client))
             {
                 NetworkStream stream = client.GetStream();
-                stream.Write(Base64ToBytes(msg.msg));
+                byte[] data = Base64ToBytes(msg.msg);
+                stream.Write(data, 0, data.Length);
             }
             else
             {
