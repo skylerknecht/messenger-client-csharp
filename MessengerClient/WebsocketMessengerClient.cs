@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using System.Text.Json;
 using System.Net.Sockets;
 using System.Net;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace MessengerClient
 {
