@@ -64,7 +64,7 @@ namespace MessengerClient
         private async Task HandleMessege(ClientWebSocket ws, string completeMessege)
         {
             Message msg = JsonSerializer.Deserialize<Message>(completeMessege);
-            //Console.WriteLine(completeMessege);
+            // Console.WriteLine(completeMessege);
             if (clients.TryGetValue(msg.identifier, out TcpClient client))
             {
                 NetworkStream stream = client.GetStream();
@@ -81,7 +81,7 @@ namespace MessengerClient
         {
             TcpClient client = new TcpClient();
             var request = JsonSerializer.Deserialize<SocksConnectRequest>(socksConnectRequest);
-            ArraySegment<byte> socksConnectResults = new ArraySegment<byte> { };
+            byte[] socksConnectResults = new byte[] { };
             SocketAsyncEventArgs connectEventArgs = new SocketAsyncEventArgs();
             try
             {
@@ -91,13 +91,13 @@ namespace MessengerClient
                 int bindPort = localEndPoint.Port;
                 socksConnectResults = SocksConnectResults(request.identifier, 0, bindAddr, bindPort);
                 clients[request.identifier] = client;
-                await ws.SendAsync(socksConnectResults, WebSocketMessageType.Text, true, CancellationToken.None);
+                await ws.SendAsync(GenerateDownstreamMessege(request.identifier, socksConnectResults), WebSocketMessageType.Text, true, CancellationToken.None);
                 await Stream(ws, request.identifier, client);
             }
             catch (Exception ex)
             {
                 socksConnectResults = SocksConnectResults(request.identifier, 1, null, 0);
-                await ws.SendAsync(socksConnectResults, WebSocketMessageType.Text, true, CancellationToken.None);
+                await ws.SendAsync(GenerateDownstreamMessege(request.identifier, socksConnectResults), WebSocketMessageType.Text, true, CancellationToken.None);
             }
         }
 
@@ -120,6 +120,15 @@ namespace MessengerClient
                 await ws.SendAsync(GenerateDownstreamMessege(identifier, data), WebSocketMessageType.Text, true, CancellationToken.None);
             }
             stream.Close();
+        }
+
+        public ArraySegment<byte> GenerateDownstreamMessege(string identifier, byte[] msg)
+        {
+            return new ArraySegment<byte>(StringToBytes(JsonSerializer.Serialize(new Message
+            {
+                identifier = identifier,
+                msg = BytesToBase64(msg)
+            })));
         }
     }
 }

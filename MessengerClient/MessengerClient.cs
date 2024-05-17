@@ -40,15 +40,6 @@ namespace MessengerClient
             public string msg { get; set; }
         }
 
-        public ArraySegment<byte> GenerateDownstreamMessege(string identifier, byte[] msg)
-        {
-            return new ArraySegment<byte>(StringToBytes(JsonSerializer.Serialize(new Message
-            {
-                identifier = identifier,
-                msg = BytesToBase64(msg)
-            })));
-        }
-
         public class SocksConnectRequest
         {
             public string identifier { get; set; }
@@ -58,7 +49,7 @@ namespace MessengerClient
             public string client_id { get; set; }
         }
 
-        public ArraySegment<byte> SocksConnectResults(string identifier, int rep, string bindAddr, int bindPort)
+        public byte[] SocksConnectResults(string identifier, int rep, string bindAddr, int bindPort)
         {
             byte[] bindAddressBytes = string.IsNullOrEmpty(bindAddr) ? new byte[] { 0x00 } : IPAddress.Parse(bindAddr).GetAddressBytes();
             byte[] bindPortBytes = BitConverter.GetBytes((ushort)bindPort);
@@ -75,7 +66,7 @@ namespace MessengerClient
             fullMessage.AddRange(message);
             fullMessage.AddRange(bindAddressBytes);
             fullMessage.AddRange(bindPortBytes);
-            return GenerateDownstreamMessege(identifier, fullMessage.ToArray());
+            return fullMessage.ToArray();
         }
     }
 }

@@ -15,23 +15,33 @@ namespace MessengerClient
             X509Chain chain,
             SslPolicyErrors sslPolicyErrors)
         {
-            // Your validation logic here
-            return true; // WARNING: Always returning true is insecure for production code
+            return true; 
         }
         public static async Task Main(string[] args)
         {
 
             ServicePointManager.ServerCertificateValidationCallback = new RemoteCertificateValidationCallback(ValidateServerCertificate);
 
-            //try {
-            WebSocketMessengerClient webSocketMessengerClient = new WebSocketMessengerClient();
-            await webSocketMessengerClient.Connect($"{args[0]}/socketio/?EIO=4&transport=websocket");
-            Console.WriteLine("lol");
-            //} catch (Exception ex)
-            //{
-            //     Console.WriteLine(ex.ToString());
-            //   }
-            // implement HTTP
+            try
+            {
+                WebSocketMessengerClient webSocketMessengerClient = new WebSocketMessengerClient();
+                await webSocketMessengerClient.Connect($"{args[0]}/socketio/?EIO=4&transport=websocket");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+            }
+
+            try
+            {
+                HTTPMessengerClient HTTPMessengerClient = new HTTPMessengerClient();
+                await HTTPMessengerClient.Connect($"{args[0]}/socketio/?EIO=4&transport=polling");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.ToString());
+            }
+
         }
     }
 }
