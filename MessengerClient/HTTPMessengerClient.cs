@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
+using System.Security.Policy;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -23,7 +24,7 @@ namespace MessengerClient
             HttpResponseMessage response = await httpClient.GetAsync(uri);
             response.EnsureSuccessStatusCode();
             serverID = await response.Content.ReadAsStringAsync();
-            Console.WriteLine("[+] Succesfully Connected to HTTP");
+            Console.WriteLine($"[+] Sucesfully connected to {uri}");
 
             // Start receiving messages
             await ReceiveMessages(uri);

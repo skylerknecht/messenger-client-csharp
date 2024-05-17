@@ -3,9 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
-using System.Threading;
 using System.Threading.Tasks;
-using System.Net.WebSockets;
 using MessengerClient;
 
 public class Program
@@ -19,49 +17,44 @@ public class Program
             throw new ArgumentException("URL is required as the first argument.");
         }
 
-        string addressPort = args[0];
-        bool useSsl = Array.Exists(args, arg => arg == "--ssl");
-        bool useWebsockets = Array.Exists(args, arg => arg == "--websockets");
-        bool useHttp = Array.Exists(args, arg => arg == "--http");
+        string uri = args[0];
+        string[] attempts;
 
-        string protocolWs = useSsl ? "wss" : "ws";
-        string protocolHttp = useSsl ? "https" : "http";
+        uri = uri.Trim('/');
 
-        if (useWebsockets)
+        if (uri.Contains("://"))
         {
-            Console.WriteLine("[*] Connecting over WebSockets");
-            await TryWsOnly($"{protocolWs}://{addressPort}");
-        }
-        else if (useHttp)
-        {
-            Console.WriteLine("[*] Connecting over HTTP");
-            await TryHttpOnly($"{protocolHttp}://{addressPort}");
+            string[] urlParts = uri.Split(new string[] { "://" }, 2, StringSplitOptions.None);
+            attempts = urlParts[0].Split('+');
+            uri = urlParts[1];
         }
         else
         {
-            await TryWsFirstThenHttp($"{protocolWs}://{addressPort}", $"{protocolHttp}://{addressPort}");
+            attempts = new string[] { "ws", "http", "wss", "https" };
         }
-    }
 
-    private static async Task TryHttpFirstThenWs(string httpUrl, string wsUrl)
-    {
-        Console.WriteLine("[*] Connecting over HTTP");
-        if (!await TryHttpOnly(httpUrl))
+        foreach (string attempt in attempts)
         {
-            Console.WriteLine("[*] Connecting over WebSockets");
-            await TryWsOnly(wsUrl);
+            if (attempt.Contains("http"))
+            {
+                bool success = await TryHttp(attempt + "://" + uri);
+                if (success)
+                {
+                    break;
+                }
+            }
+            else if (attempt.Contains("ws"))
+            {
+                bool success = await TryWs(attempt + "://" + uri);
+                if (success)
+                {
+                    break;
+                }
+            }
         }
     }
 
-    private static async Task TryWsFirstThenHttp(string wsUrl, string httpUrl)
-    {
-        if (!await TryWsOnly(wsUrl))
-        {
-            await TryHttpOnly(httpUrl);
-        }
-    }
-
-    private static async Task<bool> TryHttpOnly(string url)
+    private static async Task<bool> TryHttp(string url)
     {
         try
         {
@@ -71,12 +64,12 @@ public class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine("[!] HTTP connection failed");
+            Console.WriteLine($"[!] Failed to connect to {url}");
             return false;
         }
     }
 
-    private static async Task<bool> TryWsOnly(string url)
+    private static async Task<bool> TryWs(string url)
     {
         try
         {
@@ -86,7 +79,7 @@ public class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine("[!] WebSocket connection failed");
+            Console.WriteLine($"[!] Failed to connect to {url}");
             return false;
         }
     }

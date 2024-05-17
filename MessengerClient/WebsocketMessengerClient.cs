@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Text.Json;
 using System.Net.Sockets;
 using System.Net;
+using System.Security.Policy;
 
 namespace MessengerClient
 {
@@ -16,7 +17,7 @@ namespace MessengerClient
             using (ClientWebSocket ws = new ClientWebSocket())
             {
                 await ws.ConnectAsync(new Uri(uri), CancellationToken.None);
-                Console.WriteLine("[+] Succesfully Connected to WebSockets");
+                Console.WriteLine($"[+] Sucesfully connected to {uri}");
                 await ReceiveMessages(ws);
                 if (ws.State == WebSocketState.Open)
                 {
