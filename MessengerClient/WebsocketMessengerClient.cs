@@ -15,22 +15,13 @@ namespace MessengerClient
         {
             using (ClientWebSocket ws = new ClientWebSocket())
             {
-                try
+                await ws.ConnectAsync(new Uri(uri), CancellationToken.None);
+                Console.WriteLine("[+] Succesfully Connected to WebSockets");
+                await ReceiveMessages(ws);
+                if (ws.State == WebSocketState.Open)
                 {
-                    await ws.ConnectAsync(new Uri(uri), CancellationToken.None);
-                    await ReceiveMessages(ws);
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine($"Exception: {e.ToString()}");
-                }
-                finally
-                {
-                    if (ws.State == WebSocketState.Open)
-                    {
-                        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
-                        Console.WriteLine("WebSocket connection closed.");
-                    }
+                    await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
+                    Console.WriteLine("WebSocket connection closed.");
                 }
             }
         }

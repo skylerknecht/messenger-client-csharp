@@ -19,20 +19,14 @@ namespace MessengerClient
 
         public override async Task Connect(string uri)
         {
-            try
-            {
-                // Get the serverID
-                HttpResponseMessage response = await httpClient.GetAsync(uri);
-                response.EnsureSuccessStatusCode();
-                serverID = await response.Content.ReadAsStringAsync();
+            // Get the serverID
+            HttpResponseMessage response = await httpClient.GetAsync(uri);
+            response.EnsureSuccessStatusCode();
+            serverID = await response.Content.ReadAsStringAsync();
+            Console.WriteLine("[+] Succesfully Connected to HTTP");
 
-                // Start receiving messages
-                await ReceiveMessages(uri);
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine($"Exception: {e}");
-            }
+            // Start receiving messages
+            await ReceiveMessages(uri);
         }
 
         private async Task ReceiveMessages(string uri)
