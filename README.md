@@ -1,6 +1,10 @@
 # Messenger Client
 
-DotNet implementation of the [Messenger](https://github.com/skylerknecht/messenger) client. Implements a reverse SOCKS proxy allowing traffic to be tunneled into a private network.
+
+This repository is hosting the client meant to be used with the [Messenger Server](https://github.com/skylerknecht/messenger). 
+The seperation is meant to seperate issues with the Messenger Server and Messenger Client. Please open any issues with the Messenger Client here. 
+All example usage and additional information can be found on Messenger Server. 
+
 ```
 +-----------+        +-----------+                            +-----------+        +-----------+
 | SOCKS     |        | Messenger |   Egress (Over Internet)   | Messenger |        | Remote    |
@@ -31,3 +35,8 @@ MessengerClient.exe ws+http+https://example.com:8080
 # Connect the Messenger Client to example.com on port 443 using HTTPS only
 MessengerClient.exe https://example.com
 ```
+
+### Credits 
+
+- Skyler Knecht (@SkylerKnecht)
+- Kevin Clark (@GuhnooPlusLinux)
