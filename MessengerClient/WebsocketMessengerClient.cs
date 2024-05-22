@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
@@ -6,24 +7,27 @@ using System.Threading.Tasks;
 using System.Text.Json;
 using System.Net.Sockets;
 using System.Net;
-using System.Security.Policy;
 
 namespace MessengerClient
 {
     internal class WebSocketMessengerClient : MessengerClient
     {
+        private ClientWebSocket _ws = new ClientWebSocket();
+        private ConcurrentQueue<ArraySegment<byte>> _messageQueue = new ConcurrentQueue<ArraySegment<byte>>();
+        private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+
         public override async Task Connect(string uri)
         {
-            using (ClientWebSocket ws = new ClientWebSocket())
+            await _ws.ConnectAsync(new Uri(uri), CancellationToken.None);
+            Console.WriteLine($"[+] Successfully connected to {uri}");
+            var receivingTask = ReceiveMessages(_ws);
+            var sendingTask = ProcessMessageQueue(_ws, _cancellationTokenSource.Token);
+            await Task.WhenAll(receivingTask, sendingTask);
+
+            if (_ws.State == WebSocketState.Open)
             {
-                await ws.ConnectAsync(new Uri(uri), CancellationToken.None);
-                Console.WriteLine($"[+] Sucesfully connected to {uri}");
-                await ReceiveMessages(ws);
-                if (ws.State == WebSocketState.Open)
-                {
-                    await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
-                    Console.WriteLine("WebSocket connection closed.");
-                }
+                await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
+                Console.WriteLine("WebSocket connection closed.");
             }
         }
 
@@ -49,23 +53,23 @@ namespace MessengerClient
                     Console.WriteLine("WebSocket server requested closure.");
                     break;
                 }
-                _ = HandleMessege(ws, completeMessage.ToString());
+                _ = HandleMessage(ws, completeMessage.ToString());
             }
         }
 
-        private async Task HandleMessege(ClientWebSocket ws, string completeMessege)
+        private async Task HandleMessage(ClientWebSocket ws, string completeMessage)
         {
-            Message msg = JsonSerializer.Deserialize<Message>(completeMessege);
-            // Console.WriteLine(completeMessege);
+            Message msg = JsonSerializer.Deserialize<Message>(completeMessage);
+            Console.WriteLine(completeMessage);
             if (clients.TryGetValue(msg.identifier, out TcpClient client))
             {
                 NetworkStream stream = client.GetStream();
                 byte[] data = Base64ToBytes(msg.msg);
-                stream.Write(data, 0, data.Length);
+                await stream.WriteAsync(data, 0, data.Length);
             }
             else
             {
-                await SocksConnect(ws, completeMessege);
+                await SocksConnect(ws, completeMessage);
             }
         }
 
@@ -74,7 +78,6 @@ namespace MessengerClient
             TcpClient client = new TcpClient();
             var request = JsonSerializer.Deserialize<SocksConnectRequest>(socksConnectRequest);
             byte[] socksConnectResults = new byte[] { };
-            SocketAsyncEventArgs connectEventArgs = new SocketAsyncEventArgs();
             try
             {
                 await client.ConnectAsync(request.address, request.port);
@@ -83,13 +86,15 @@ namespace MessengerClient
                 int bindPort = localEndPoint.Port;
                 socksConnectResults = SocksConnectResults(request.identifier, 0, bindAddr, bindPort);
                 clients[request.identifier] = client;
-                await ws.SendAsync(GenerateDownstreamMessege(request.identifier, socksConnectResults), WebSocketMessageType.Text, true, CancellationToken.None);
+                Console.WriteLine(socksConnectResults);
+                EnqueueMessage(GenerateDownstreamMessage(request.identifier, socksConnectResults));
                 await Stream(ws, request.identifier, client);
             }
             catch (Exception ex)
             {
+                Console.WriteLine(ex.ToString());
                 socksConnectResults = SocksConnectResults(request.identifier, 1, null, 0);
-                await ws.SendAsync(GenerateDownstreamMessege(request.identifier, socksConnectResults), WebSocketMessageType.Text, true, CancellationToken.None);
+                EnqueueMessage(GenerateDownstreamMessage(request.identifier, socksConnectResults));
             }
         }
 
@@ -99,28 +104,44 @@ namespace MessengerClient
             while (true)
             {
                 byte[] buffer = new byte[4096];
-                int bytesRead = stream.Read(buffer, 0, buffer.Length);
+                int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
 
                 if (bytesRead == 0)
                 {
                     break;
                 }
 
-
                 byte[] data = new byte[bytesRead];
                 Array.Copy(buffer, data, bytesRead);
-                await ws.SendAsync(GenerateDownstreamMessege(identifier, data), WebSocketMessageType.Text, true, CancellationToken.None);
+                EnqueueMessage(GenerateDownstreamMessage(identifier, data));
             }
             stream.Close();
         }
 
-        public ArraySegment<byte> GenerateDownstreamMessege(string identifier, byte[] msg)
+        public ArraySegment<byte> GenerateDownstreamMessage(string identifier, byte[] msg)
         {
             return new ArraySegment<byte>(StringToBytes(JsonSerializer.Serialize(new Message
             {
                 identifier = identifier,
                 msg = BytesToBase64(msg)
             })));
+        }
+
+        private void EnqueueMessage(ArraySegment<byte> message)
+        {
+            _messageQueue.Enqueue(message);
+        }
+
+        private async Task ProcessMessageQueue(ClientWebSocket ws, CancellationToken token)
+        {
+            while (!token.IsCancellationRequested)
+            {
+                while (_messageQueue.TryDequeue(out var message))
+                {
+                    await ws.SendAsync(message, WebSocketMessageType.Text, true, token);
+                }
+                await Task.Delay(10); // Adjust delay as necessary
+            }
         }
     }
 }
