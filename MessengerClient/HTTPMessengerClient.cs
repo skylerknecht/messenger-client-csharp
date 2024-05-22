@@ -75,7 +75,7 @@ namespace MessengerClient
 
         private async Task HandleMessage(string uri, string completeMessage)
         {
-            Console.WriteLine(completeMessage);
+            //Console.WriteLine(completeMessage);
             Message msg = JsonSerializer.Deserialize<Message>(completeMessage);
             if (clients.TryGetValue(msg.identifier, out TcpClient client))
             {

@@ -21,7 +21,7 @@ namespace MessengerClient
             await _ws.ConnectAsync(new Uri(uri), CancellationToken.None);
             Console.WriteLine($"[+] Successfully connected to {uri}");
             var receivingTask = ReceiveMessages(_ws);
-            var sendingTask = ProcessMessageQueue(_ws, _cancellationTokenSource.Token);
+            var sendingTask = SendMessages(_ws, _cancellationTokenSource.Token);
             await Task.WhenAll(receivingTask, sendingTask);
 
             if (_ws.State == WebSocketState.Open)
@@ -60,7 +60,7 @@ namespace MessengerClient
         private async Task HandleMessage(ClientWebSocket ws, string completeMessage)
         {
             Message msg = JsonSerializer.Deserialize<Message>(completeMessage);
-            Console.WriteLine(completeMessage);
+            //Console.WriteLine(completeMessage);
             if (clients.TryGetValue(msg.identifier, out TcpClient client))
             {
                 NetworkStream stream = client.GetStream();
@@ -132,7 +132,7 @@ namespace MessengerClient
             _messageQueue.Enqueue(message);
         }
 
-        private async Task ProcessMessageQueue(ClientWebSocket ws, CancellationToken token)
+        private async Task SendMessages(ClientWebSocket ws, CancellationToken token)
         {
             while (!token.IsCancellationRequested)
             {
