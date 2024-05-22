@@ -86,13 +86,11 @@ namespace MessengerClient
                 int bindPort = localEndPoint.Port;
                 socksConnectResults = SocksConnectResults(request.identifier, 0, bindAddr, bindPort);
                 clients[request.identifier] = client;
-                Console.WriteLine(socksConnectResults);
                 EnqueueMessage(GenerateDownstreamMessage(request.identifier, socksConnectResults));
                 await Stream(ws, request.identifier, client);
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.ToString());
                 socksConnectResults = SocksConnectResults(request.identifier, 1, null, 0);
                 EnqueueMessage(GenerateDownstreamMessage(request.identifier, socksConnectResults));
             }
