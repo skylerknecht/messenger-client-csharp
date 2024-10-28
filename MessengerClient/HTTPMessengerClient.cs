@@ -4,8 +4,6 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
-using System.Security.Policy;
-using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
@@ -17,6 +15,11 @@ namespace MessengerClient
         private readonly ConcurrentDictionary<string, TcpClient> clients = new ConcurrentDictionary<string, TcpClient>();
         private readonly ConcurrentQueue<Message> downstreamQueue = new ConcurrentQueue<Message>();
         private string serverID = string.Empty;
+
+        public HTTPMessengerClient(byte[] key) : base(key) 
+        {
+
+        }
 
         public override async Task Connect(string uri)
         {
@@ -52,12 +55,15 @@ namespace MessengerClient
                     }
 
                     string jsonMessage = JsonSerializer.Serialize(messagesToSend);
-                    HttpContent content = new StringContent(jsonMessage, Encoding.UTF8, "application/json");
+                    byte[] EncryptedMessage = Crypto.Encrypt(Key, jsonMessage);
+                    HttpContent content = new ByteArrayContent(EncryptedMessage);
+                    content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
                     HttpResponseMessage response = await httpClient.PostAsync(uri, content);
                     response.EnsureSuccessStatusCode();
 
                     // Process the response which might contain multiple messages
-                    string completeMessage = await response.Content.ReadAsStringAsync();
+                    byte[] EncryptedCompleteMessage = await response.Content.ReadAsByteArrayAsync();
+                    string completeMessage = Crypto.Decrypt(Key, EncryptedCompleteMessage);
                     var messages = JsonSerializer.Deserialize<String[]>(completeMessage);
 
                     foreach (var message in messages)

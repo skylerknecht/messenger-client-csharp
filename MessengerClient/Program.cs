@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Net;
-using System.Net.Http;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
@@ -12,12 +11,14 @@ public class Program
     {
         ServicePointManager.ServerCertificateValidationCallback = new RemoteCertificateValidationCallback(ValidateServerCertificate);
 
-        if (args.Length < 1)
+        if (args.Length < 2)
         {
-            throw new ArgumentException("URL is required as the first argument.");
+            Console.WriteLine("URL is required as the first argument, key as second argument");
+            return;
         }
 
         string uri = args[0];
+        byte[] key = Crypto.Hash(args[1]);
         string[] attempts;
 
         uri = uri.Trim('/');
@@ -37,7 +38,7 @@ public class Program
         {
             if (attempt.Contains("http"))
             {
-                bool success = await TryHttp(attempt + "://" + uri);
+                bool success = await TryHttp(attempt + "://" + uri, key);
                 if (success)
                 {
                     break;
@@ -45,7 +46,7 @@ public class Program
             }
             else if (attempt.Contains("ws"))
             {
-                bool success = await TryWs(attempt + "://" + uri);
+                bool success = await TryWs(attempt + "://" + uri, key);
                 if (success)
                 {
                     break;
@@ -54,11 +55,11 @@ public class Program
         }
     }
 
-    private static async Task<bool> TryHttp(string url)
+    private static async Task<bool> TryHttp(string url, byte[] key)
     {
         try
         {
-            HTTPMessengerClient httpMessengerClient = new HTTPMessengerClient();
+            HTTPMessengerClient httpMessengerClient = new HTTPMessengerClient(key);
             await httpMessengerClient.Connect($"{url}/socketio/?EIO=4&transport=polling");
             return true;
         }
@@ -69,11 +70,11 @@ public class Program
         }
     }
 
-    private static async Task<bool> TryWs(string url)
+    private static async Task<bool> TryWs(string url, byte[] key)
     {
         try
         {
-            WebSocketMessengerClient webSocketMessengerClient = new WebSocketMessengerClient();
+            WebSocketMessengerClient webSocketMessengerClient = new WebSocketMessengerClient(key);
             await webSocketMessengerClient.Connect($"{url}/socketio/?EIO=4&transport=websocket");
             return true;
         }

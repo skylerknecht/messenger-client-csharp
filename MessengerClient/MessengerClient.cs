@@ -1,21 +1,22 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Net.WebSockets;
-using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
 namespace MessengerClient
 {
     internal abstract class MessengerClient
     {
+        public byte[] Key;
         public Dictionary<string, TcpClient> clients = new Dictionary<string, TcpClient>();
         public readonly int bufferSize = 4096;
+
+        public MessengerClient(byte[] key)
+        {
+            Key = key;
+        }
 
         public abstract Task Connect(string uri);
 

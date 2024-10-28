@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
-using System.Text;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Text.Json;
@@ -15,6 +15,11 @@ namespace MessengerClient
         private ClientWebSocket _ws = new ClientWebSocket();
         private ConcurrentQueue<ArraySegment<byte>> _messageQueue = new ConcurrentQueue<ArraySegment<byte>>();
         private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+
+        public WebSocketMessengerClient(byte[] key) : base(key)
+        {
+
+        }
 
         public override async Task Connect(string uri)
         {
@@ -34,26 +39,28 @@ namespace MessengerClient
         private async Task ReceiveMessages(ClientWebSocket ws)
         {
             byte[] buffer = new byte[4096];
-
             while (ws.State == WebSocketState.Open)
             {
-                var completeMessage = new StringBuilder();
-                WebSocketReceiveResult result = null;
-                do
+                using (var memoryStream = new MemoryStream())
                 {
-                    result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-                    string messagePart = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                    completeMessage.Append(messagePart);
+                    WebSocketReceiveResult result = null;
+                    do
+                    {
+                        result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+                        await memoryStream.WriteAsync(buffer, 0, result.Count);
+                    } while (!result.EndOfMessage);
 
-                } while (!result.EndOfMessage);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server requested closure", CancellationToken.None);
+                        Console.WriteLine("WebSocket server requested closure.");
+                        break;
+                    }
 
-                if (result.MessageType == WebSocketMessageType.Close)
-                {
-                    await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server requested closure", CancellationToken.None);
-                    Console.WriteLine("WebSocket server requested closure.");
-                    break;
+                    byte[] completeMessage = memoryStream.ToArray();
+
+                    _ = HandleMessage(ws, Crypto.Decrypt(Key, completeMessage));
                 }
-                _ = HandleMessage(ws, completeMessage.ToString());
             }
         }
 
@@ -136,7 +143,8 @@ namespace MessengerClient
             {
                 while (_messageQueue.TryDequeue(out var message))
                 {
-                    await ws.SendAsync(message, WebSocketMessageType.Text, true, token);
+                    byte[] encryptedMessage = Crypto.Encrypt(Key, message);
+                    await ws.SendAsync(new ArraySegment<byte>(encryptedMessage), WebSocketMessageType.Binary, true, token);
                 }
                 await Task.Delay(10); // Adjust delay as necessary
             }
