@@ -1,172 +1,133 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.Net;
 using System.Net.Http;
-using System.Net.Sockets;
-using System.Security.Policy;
 using System.Text;
-using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace MessengerClient
 {
-    internal class HTTPMessengerClient : MessengerClient
+    public class HTTPMessengerClient : MessengerClient
     {
-        private static readonly HttpClient httpClient = new HttpClient();
-        private readonly ConcurrentDictionary<string, TcpClient> clients = new ConcurrentDictionary<string, TcpClient>();
-        private readonly ConcurrentQueue<Message> downstreamQueue = new ConcurrentQueue<Message>();
-        private string serverID = string.Empty;
+        private readonly string _uri;
+        private readonly HttpClient _httpClient;
+        private readonly ConcurrentQueue<byte[]> DownstreamMessages;
+        private string MessengerId;
 
-        public override async Task Connect(string uri)
+        public HTTPMessengerClient(string uri)
         {
-            // Get the serverID
-            HttpResponseMessage response = await httpClient.GetAsync(uri);
-            response.EnsureSuccessStatusCode();
-            serverID = await response.Content.ReadAsStringAsync();
-            Console.WriteLine($"[+] Sucesfully connected to {uri}");
-
-            // Start receiving messages
-            await ReceiveMessages(uri);
+            _uri = uri;
+            _httpClient = new HttpClient();
+            DownstreamMessages = new ConcurrentQueue<byte[]>();
         }
 
-        private async Task ReceiveMessages(string uri)
+        public override async Task ConnectAsync()
         {
-            while (true)
-            {
-                await Task.Delay(100);
-                try
-                {
-                    List<Message> messagesToSend = new List<Message>();
-
-                    // Dequeue all messages from the downstream queue
-                    while (downstreamQueue.TryDequeue(out Message downstreamMessage))
-                    {
-                        messagesToSend.Add(downstreamMessage);
-                    }
-
-                    if (messagesToSend.Count == 0)
-                    {
-                        // Post an empty message to keep the connection alive
-                        messagesToSend.Add(GenerateDownstreamMessage("", new byte[] { }));
-                    }
-
-                    string jsonMessage = JsonSerializer.Serialize(messagesToSend);
-                    HttpContent content = new StringContent(jsonMessage, Encoding.UTF8, "application/json");
-                    HttpResponseMessage response = await httpClient.PostAsync(uri, content);
-                    response.EnsureSuccessStatusCode();
-
-                    // Process the response which might contain multiple messages
-                    string completeMessage = await response.Content.ReadAsStringAsync();
-                    var messages = JsonSerializer.Deserialize<String[]>(completeMessage);
-
-                    foreach (var message in messages)
-                    {
-                        _ = HandleMessage(uri, message);
-                    }
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine($"Exception: {e}");
-                    break;
-                }
-            }
-        }
-
-        private async Task HandleMessage(string uri, string completeMessage)
-        {
-            //Console.WriteLine(completeMessage);
-            Message msg = JsonSerializer.Deserialize<Message>(completeMessage);
-            if (clients.TryGetValue(msg.identifier, out TcpClient client))
-            {
-                NetworkStream stream = client.GetStream();
-                byte[] data = Base64ToBytes(msg.msg);
-                await stream.WriteAsync(data, 0, data.Length);
-            }
-            else
-            {
-                await SocksConnect(uri, completeMessage);
-            }
-        }
-
-        private async Task SocksConnect(string uri, string socksConnectRequest)
-        {
-            TcpClient client = new TcpClient();
-            var request = JsonSerializer.Deserialize<SocksConnectRequest>(socksConnectRequest);
-            byte[] socksConnectResults = new byte[] { };
-
             try
             {
-                await client.ConnectAsync(request.address, request.port);
-                IPEndPoint localEndPoint = client.Client.LocalEndPoint as IPEndPoint;
-                string bindAddr = localEndPoint.Address.ToString();
-                int bindPort = localEndPoint.Port;
-                socksConnectResults = SocksConnectResults(request.identifier, 0, bindAddr, bindPort);
+                Console.WriteLine($"Connecting to HTTP server at {_uri}");
+                var response = await _httpClient.GetStringAsync(_uri);
+                MessengerId = response.Trim(); // Assuming server returns a unique messenger ID.
+                Console.WriteLine($"Connected to server with Messenger ID: {MessengerId}");
 
-                clients[request.identifier] = client;
-                downstreamQueue.Enqueue(GenerateDownstreamMessage(request.identifier, socksConnectResults));
-
-                await Stream(uri, request.identifier, client);
+                // Start polling for new messages
+                await PollServerAsync();
             }
             catch (Exception ex)
             {
-                socksConnectResults = SocksConnectResults(request.identifier, 1, null, 0);
-                downstreamQueue.Enqueue(GenerateDownstreamMessage(request.identifier, socksConnectResults));
+                Console.WriteLine($"Error connecting to server: {ex.Message}");
+                throw;
             }
         }
 
-        public async Task Stream(string uri, string identifier, TcpClient client)
+        private async Task PollServerAsync()
         {
-            NetworkStream stream = client.GetStream();
             while (true)
             {
-                byte[] buffer = new byte[4096];
-                int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-
-                if (bytesRead == 0)
+                try
                 {
+                    // Collect pending downstream messages
+                    var downstreamPayload = MessageBuilder.CheckIn(MessengerId);
+                    while (DownstreamMessages.TryDequeue(out var message))
+                    {
+                        downstreamPayload = CombineArrays(downstreamPayload, message);
+                    }
+
+                    var content = new ByteArrayContent(downstreamPayload);
+                    var response = await _httpClient.PostAsync(_uri, content);
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        Console.WriteLine($"Failed to poll server. HTTP {response.StatusCode}");
+                        break;
+                    }
+
+                    var responseData = await response.Content.ReadAsByteArrayAsync();
+                    var messages = MessageParser.ParseMessages(responseData);
+
+                    foreach (var message in messages)
+                    {
+                        await HandleMessageAsync(message); // Pass the parsed message here
+                    }
+
+                    await Task.Delay(1000); // Wait before polling again
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error polling server: {ex.Message}");
                     break;
                 }
-
-                byte[] data = new byte[bytesRead];
-                Array.Copy(buffer, data, bytesRead);
-
-                var message = GenerateDownstreamMessage(identifier, data);
-
-                // Add the message to the downstream queue
-                downstreamQueue.Enqueue(message);
             }
-            stream.Close();
         }
 
-        public Message GenerateDownstreamMessage(string identifier, byte[] msg)
+        public override async Task SendDownstreamMessageAsync(byte[] messageData)
         {
-            return new Message
+            try
             {
-                identifier = $"{serverID}:{identifier}",
-                msg = BytesToBase64(msg)
-            };
+                DownstreamMessages.Enqueue(messageData);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error enqueuing downstream message: {ex.Message}");
+            }
         }
 
-        private byte[] SocksConnectResults(string identifier, int rep, string bindAddr, int bindPort)
+        public override async Task HandleMessageAsync(Message message)
         {
-            byte[] bindAddressBytes = string.IsNullOrEmpty(bindAddr) ? new byte[] { 0x00 } : IPAddress.Parse(bindAddr).GetAddressBytes();
-            byte[] bindPortBytes = BitConverter.GetBytes((ushort)bindPort);
-            Array.Reverse(bindPortBytes);
+            // Correctly process the parsed message object
+            switch (message)
+            {
+                case InitiateForwarderClientReqMessage reqMessage:
+                    await HandleInitiateForwarderClientReqAsync(reqMessage);
+                    break;
 
-            var message = new byte[] {
-                5,
-                (byte)rep,
-                0,
-                1,
-            };
+                case InitiateForwarderClientRepMessage repMessage:
+                    Console.WriteLine("InitiateForwarderClientRep message received");
+                    _ = StreamAsync(repMessage.ForwarderClientId);
+                    break;
 
-            var fullMessage = new List<byte>();
-            fullMessage.AddRange(message);
-            fullMessage.AddRange(bindAddressBytes);
-            fullMessage.AddRange(bindPortBytes);
+                case SendDataMessage sendDataMessage:
+                    if (ForwarderClients.TryGetValue(sendDataMessage.ForwarderClientId, out var client))
+                    {
+                        await client.GetStream().WriteAsync(sendDataMessage.Data, 0, sendDataMessage.Data.Length);
+                    }
+                    break;
 
-            return fullMessage.ToArray();
+                case CheckInMessage checkInMessage:
+                    Console.WriteLine($"Check-In Message: Messenger ID: {checkInMessage.MessengerId}");
+                    break;
+
+                default:
+                    Console.WriteLine("Unknown message type received");
+                    break;
+            }
+        }
+
+        private static byte[] CombineArrays(byte[] first, byte[] second)
+        {
+            var result = new byte[first.Length + second.Length];
+            Buffer.BlockCopy(first, 0, result, 0, first.Length);
+            Buffer.BlockCopy(second, 0, result, first.Length, second.Length);
+            return result;
         }
     }
 }

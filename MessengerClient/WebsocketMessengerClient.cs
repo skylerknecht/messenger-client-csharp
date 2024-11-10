@@ -1,133 +1,130 @@
 using System;
 using System.Collections.Concurrent;
+using System.IO;
+using System.Net.Sockets;
 using System.Net.WebSockets;
+using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Text.Json;
-using System.Net.Sockets;
-using System.Net;
 
 namespace MessengerClient
 {
-    internal class WebSocketMessengerClient : MessengerClient
+    public class WebSocketMessengerClient : MessengerClient
     {
-        private ClientWebSocket _ws = new ClientWebSocket();
+        private readonly Uri _uri;
+        private ClientWebSocket _webSocket;
         private ConcurrentQueue<ArraySegment<byte>> _messageQueue = new ConcurrentQueue<ArraySegment<byte>>();
         private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
 
-        public override async Task Connect(string uri)
+        public WebSocketMessengerClient(string uri)
         {
-            await _ws.ConnectAsync(new Uri(uri), CancellationToken.None);
-            Console.WriteLine($"[+] Successfully connected to {uri}");
-            var receivingTask = ReceiveMessages(_ws);
-            var sendingTask = SendMessages(_ws, _cancellationTokenSource.Token);
-            await Task.WhenAll(receivingTask, sendingTask);
-
-            if (_ws.State == WebSocketState.Open)
-            {
-                await _ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", CancellationToken.None);
-                Console.WriteLine("WebSocket connection closed.");
-            }
+            _uri = new Uri(uri);
+            _webSocket = new ClientWebSocket();
         }
 
-        private async Task ReceiveMessages(ClientWebSocket ws)
+        /// <summary>
+        /// Establishes a WebSocket connection to the server.
+        /// </summary>
+        public override async Task ConnectAsync()
         {
-            byte[] buffer = new byte[4096];
-
-            while (ws.State == WebSocketState.Open)
-            {
-                var completeMessage = new StringBuilder();
-                WebSocketReceiveResult result = null;
-                do
-                {
-                    result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-                    string messagePart = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                    completeMessage.Append(messagePart);
-
-                } while (!result.EndOfMessage);
-
-                if (result.MessageType == WebSocketMessageType.Close)
-                {
-                    await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Server requested closure", CancellationToken.None);
-                    Console.WriteLine("WebSocket server requested closure.");
-                    break;
-                }
-                _ = HandleMessage(ws, completeMessage.ToString());
-            }
-        }
-
-        private async Task HandleMessage(ClientWebSocket ws, string completeMessage)
-        {
-            Message msg = JsonSerializer.Deserialize<Message>(completeMessage);
-            //Console.WriteLine(completeMessage);
-            if (clients.TryGetValue(msg.identifier, out TcpClient client))
-            {
-                NetworkStream stream = client.GetStream();
-                byte[] data = Base64ToBytes(msg.msg);
-                await stream.WriteAsync(data, 0, data.Length);
-            }
-            else
-            {
-                await SocksConnect(ws, completeMessage);
-            }
-        }
-
-        private async Task SocksConnect(ClientWebSocket ws, string socksConnectRequest)
-        {
-            TcpClient client = new TcpClient();
-            var request = JsonSerializer.Deserialize<SocksConnectRequest>(socksConnectRequest);
-            byte[] socksConnectResults = new byte[] { };
             try
             {
-                await client.ConnectAsync(request.address, request.port);
-                IPEndPoint localEndPoint = client.Client.LocalEndPoint as IPEndPoint;
-                string bindAddr = localEndPoint.Address.ToString();
-                int bindPort = localEndPoint.Port;
-                socksConnectResults = SocksConnectResults(request.identifier, 0, bindAddr, bindPort);
-                clients[request.identifier] = client;
-                EnqueueMessage(GenerateDownstreamMessage(request.identifier, socksConnectResults));
-                await Stream(ws, request.identifier, client);
+                Console.WriteLine("Connecting to WebSocket server...");
+                await _webSocket.ConnectAsync(_uri, CancellationToken.None);
+                Console.WriteLine("Connected!");
+
+                // Start receiving messages
+                var receivingTask = ReceiveMessagesAsync();
+                var sendingTask = SendMessages(_webSocket, _cancellationTokenSource.Token);
+                await Task.WhenAll(receivingTask, sendingTask);
             }
             catch (Exception ex)
             {
-                socksConnectResults = SocksConnectResults(request.identifier, 1, null, 0);
-                EnqueueMessage(GenerateDownstreamMessage(request.identifier, socksConnectResults));
+                Console.WriteLine($"Error connecting to WebSocket server: {ex.Message}");
             }
         }
 
-        public async Task Stream(ClientWebSocket ws, string identifier, TcpClient client)
+        /// <summary>
+        /// Receives messages from the WebSocket server.
+        /// </summary>
+        private async Task ReceiveMessagesAsync()
         {
-            NetworkStream stream = client.GetStream();
-            while (true)
+            var buffer = new byte[4096];
+            while (_webSocket.State == WebSocketState.Open)
             {
-                byte[] buffer = new byte[4096];
-                int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+                var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
 
-                if (bytesRead == 0)
+                if (result.MessageType == WebSocketMessageType.Close)
                 {
+                    Console.WriteLine("WebSocket connection closed.");
                     break;
                 }
 
-                byte[] data = new byte[bytesRead];
-                Array.Copy(buffer, data, bytesRead);
-                EnqueueMessage(GenerateDownstreamMessage(identifier, data));
+                if (result.MessageType == WebSocketMessageType.Binary)
+                {
+                    var messageData = new byte[result.Count];
+                    Array.Copy(buffer, messageData, result.Count);
+
+                    try
+                    {
+                        var message = MessageParser.ParseMessage(messageData);
+                        _ = HandleMessageAsync(message);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error parsing message: {ex.Message}");
+                    }
+                }
             }
-            stream.Close();
         }
 
-        public ArraySegment<byte> GenerateDownstreamMessage(string identifier, byte[] msg)
+        /// <summary>
+        /// Handles incoming messages based on their type.
+        /// </summary>
+        /// <param name="message">The parsed message.</param>
+        public override async Task HandleMessageAsync(Message message)
         {
-            return new ArraySegment<byte>(StringToBytes(JsonSerializer.Serialize(new Message
+            Console.WriteLine($"Received message: {message}");
+            switch (message)
             {
-                identifier = identifier,
-                msg = BytesToBase64(msg)
-            })));
+                case InitiateForwarderClientReqMessage reqMessage:
+                    Console.WriteLine("InitiateForwarderClientReq message received");
+                    await HandleInitiateForwarderClientReqAsync(reqMessage);
+                    break;
+
+                case InitiateForwarderClientRepMessage repMessage:
+                    Console.WriteLine("InitiateForwarderClientRep message received");
+                    _ = StreamAsync(repMessage.ForwarderClientId);
+                    break;
+
+                case SendDataMessage sendDataMessage:
+                    Console.WriteLine("SendDataMessage message received");
+                    if (ForwarderClients.TryGetValue(sendDataMessage.ForwarderClientId, out var client))
+                    {
+                        Console.WriteLine("sending data");
+                        await client.GetStream().WriteAsync(sendDataMessage.Data, 0, sendDataMessage.Data.Length);
+                    }
+                    break;
+
+                case CheckInMessage checkInMessage:
+                    Console.WriteLine($"Check-In Message: Messenger ID: {checkInMessage.MessengerId}");
+                    break;
+
+                default:
+                    Console.WriteLine("Unknown message type received");
+                    break;
+            }
         }
 
-        private void EnqueueMessage(ArraySegment<byte> message)
+        /// <summary>
+        /// Sends a downstream message to the WebSocket server.
+        /// </summary>
+        /// <param name="messageData">The byte array containing the message data.</param>
+        public override async Task SendDownstreamMessageAsync(byte[] messageData)
         {
-            _messageQueue.Enqueue(message);
+            Console.WriteLine($"sending {_webSocket.State == WebSocketState.Open}");
+            _messageQueue.Enqueue(new ArraySegment<byte>(messageData));
         }
 
         private async Task SendMessages(ClientWebSocket ws, CancellationToken token)
@@ -136,9 +133,21 @@ namespace MessengerClient
             {
                 while (_messageQueue.TryDequeue(out var message))
                 {
-                    await ws.SendAsync(message, WebSocketMessageType.Text, true, token);
+                    await ws.SendAsync(message, WebSocketMessageType.Binary, true, token);
                 }
                 await Task.Delay(10); // Adjust delay as necessary
+            }
+        }
+
+        /// <summary>
+        /// Closes the WebSocket connection.
+        /// </summary>
+        public async Task CloseAsync()
+        {
+            if (_webSocket.State == WebSocketState.Open)
+            {
+                await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing connection", CancellationToken.None);
+                Console.WriteLine("WebSocket connection closed.");
             }
         }
     }

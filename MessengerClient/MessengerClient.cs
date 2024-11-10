@@ -1,72 +1,107 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net;
+using System.Collections.Concurrent;
 using System.Net.Sockets;
-using System.Net.WebSockets;
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
 namespace MessengerClient
 {
-    internal abstract class MessengerClient
+    public abstract class MessengerClient
     {
-        public Dictionary<string, TcpClient> clients = new Dictionary<string, TcpClient>();
-        public readonly int bufferSize = 4096;
+        // Stores active TcpClients with their unique identifiers
+        public ConcurrentDictionary<string, TcpClient> ForwarderClients = new ConcurrentDictionary<string, TcpClient>();
 
-        public abstract Task Connect(string uri);
+        /// <summary>
+        /// Establishes the connection to the server.
+        /// </summary>
+        public abstract Task ConnectAsync();
 
-        public string BytesToBase64(byte[] data)
+        /// <summary>
+        /// Sends a downstream message to the server.
+        /// </summary>
+        /// <param name="messageData">The byte array containing the message data.</param>
+        public abstract Task SendDownstreamMessageAsync(byte[] messageData);
+
+        /// <summary>
+        /// Handles an incoming message from the server.
+        /// </summary>
+        /// <param name="data">The byte array containing the message data.</param>
+        public abstract Task HandleMessageAsync(Message message);
+
+        /// <summary>
+        /// Handles a request to initiate a forwarder client.
+        /// </summary>
+        /// <param name="message">The parsed message containing the request data.</param>
+        public async Task HandleInitiateForwarderClientReqAsync(InitiateForwarderClientReqMessage message)
         {
-            return Convert.ToBase64String(data);
+            try
+            {
+                var client = new TcpClient();
+                Console.WriteLine($"{message.IpAddress} {message.Port}");
+                await client.ConnectAsync(message.IpAddress, message.Port);
+                ForwarderClients[message.ForwarderClientId] = client;
+
+                var bindAddress = ((System.Net.IPEndPoint)client.Client.LocalEndPoint).Address.ToString();
+                var bindPort = ((System.Net.IPEndPoint)client.Client.LocalEndPoint).Port;
+
+                var downstreamMessage = MessageBuilder.InitiateForwarderClientRep(message.ForwarderClientId, bindAddress, bindPort, 0, 0);
+                await SendDownstreamMessageAsync(downstreamMessage);
+
+                // Start streaming for this forwarder client
+                _ = StreamAsync(message.ForwarderClientId);
+            }
+            catch (Exception ex) 
+            {
+                Console.WriteLine(ex);
+                var downstreamMessage = MessageBuilder.InitiateForwarderClientRep(
+                    message.ForwarderClientId, string.Empty, 0, 0, 1);
+                await SendDownstreamMessageAsync(downstreamMessage);
+            }
         }
 
-        public byte[] Base64ToBytes(string data)
+        /// <summary>
+        /// Streams data from a forwarder client to the server.
+        /// </summary>
+        /// <param name="forwarderClientId">The unique identifier of the forwarder client.</param>
+        protected async Task StreamAsync(string forwarderClientId)
         {
-            return Convert.FromBase64String(data);
-        }
+            if (!ForwarderClients.TryGetValue(forwarderClientId, out var client))
+                return;
 
-        public byte[] StringToBytes(string data)
-        {
-            return Encoding.UTF8.GetBytes(data);
-        }
+            NetworkStream stream = null;
 
-        public class Message
-        {
-            public string identifier { get; set; }
-            public string msg { get; set; }
-        }
+            try
+            {
+                stream = client.GetStream();
+                var buffer = new byte[4096];
+                int bytesRead;
 
-        public class SocksConnectRequest
-        {
-            public string identifier { get; set; }
-            public int atype { get; set; }
-            public string address { get; set; }
-            public int port { get; set; }
-            public string client_id { get; set; }
-        }
+                while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                {
+                    // Allocate a new array for the valid data
+                    var dataToSend = new byte[bytesRead];
+                    Array.Copy(buffer, 0, dataToSend, 0, bytesRead);
 
-        public byte[] SocksConnectResults(string identifier, int rep, string bindAddr, int bindPort)
-        {
-            byte[] bindAddressBytes = string.IsNullOrEmpty(bindAddr) ? new byte[] { 0x00 } : IPAddress.Parse(bindAddr).GetAddressBytes();
-            byte[] bindPortBytes = BitConverter.GetBytes((ushort)bindPort);
-            Array.Reverse(bindPortBytes);
+                    var downstreamMessage = MessageBuilder.SendData(forwarderClientId, dataToSend);
+                    await SendDownstreamMessageAsync(downstreamMessage);
+                }
+            }
+            catch
+            {
+                // Handle client disconnection or stream errors
+            }
+            finally
+            {
+                // Ensure cleanup
+                if (stream != null)
+                    stream.Dispose();
 
-            var message = new byte[] {
-                5,
-                (byte)rep,
-                0,
-                1,
-            };
+                // Remove the client from the dictionary
+                ForwarderClients.TryRemove(forwarderClientId, out _);
 
-            var fullMessage = new List<byte>();
-            fullMessage.AddRange(message);
-            fullMessage.AddRange(bindAddressBytes);
-            fullMessage.AddRange(bindPortBytes);
-            return fullMessage.ToArray();
+                // Notify the server about client disconnection
+                var closeMessage = MessageBuilder.SendData(forwarderClientId, Array.Empty<byte>());
+                await SendDownstreamMessageAsync(closeMessage);
+            }
         }
     }
 }

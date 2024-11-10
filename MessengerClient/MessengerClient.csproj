@@ -74,9 +74,11 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="HTTPMessengerClient.cs" />
+    <Compile Include="Message.cs" />
     <Compile Include="MessengerClient.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="RemotePortForwarder.cs" />
     <Compile Include="WebSocketMessengerClient.cs" />
   </ItemGroup>
   <ItemGroup>

@@ -4,88 +4,136 @@ using System.Net.Http;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
-using MessengerClient;
 
-public class Program
+namespace MessengerClient
 {
-    public static async Task Main(string[] args)
+    public class Program
     {
-        ServicePointManager.ServerCertificateValidationCallback = new RemoteCertificateValidationCallback(ValidateServerCertificate);
+        // Constants for HTTP and WebSocket routes and user agent
+        private const string HTTP_ROUTE = "socketio/?EIO=4&transport=polling";
+        private const string WS_ROUTE = "socketio/?EIO=4&transport=websocket";
+        private const string USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0";
 
-        if (args.Length < 1)
+        public static async Task Main(string[] args)
         {
-            throw new ArgumentException("URL is required as the first argument.");
-        }
+            ServicePointManager.ServerCertificateValidationCallback = new RemoteCertificateValidationCallback(ValidateServerCertificate);
 
-        string uri = args[0];
-        string[] attempts;
-
-        uri = uri.Trim('/');
-
-        if (uri.Contains("://"))
-        {
-            string[] urlParts = uri.Split(new string[] { "://" }, 2, StringSplitOptions.None);
-            attempts = urlParts[0].Split('+');
-            uri = urlParts[1];
-        }
-        else
-        {
-            attempts = new string[] { "ws", "http", "wss", "https" };
-        }
-
-        foreach (string attempt in attempts)
-        {
-            if (attempt.Contains("http"))
+            if (args.Length < 1)
             {
-                bool success = await TryHttp(attempt + "://" + uri);
-                if (success)
+                Console.WriteLine("Usage: Program <URL> [remote_port_forwards...]");
+                return;
+            }
+
+            string uri = args[0];
+
+            // Handling `remotePortForwards` without slicing
+            string[] remotePortForwards;
+            if (args.Length > 1)
+            {
+                remotePortForwards = new string[args.Length - 1];
+                Array.Copy(args, 1, remotePortForwards, 0, args.Length - 1);
+            }
+            else
+            {
+                remotePortForwards = Array.Empty<string>();
+            }
+
+            string[] attempts;
+
+            uri = uri.Trim('/');
+
+            if (uri.Contains("://"))
+            {
+                string[] urlParts = uri.Split(new[] { "://" }, 2, StringSplitOptions.None);
+                attempts = urlParts[0].Split('+');
+                uri = urlParts[1];
+            }
+            else
+            {
+                attempts = new[] { "ws", "http", "wss", "https" };
+            }
+
+            foreach (string attempt in attempts)
+            {
+                if (attempt.Contains("http"))
                 {
-                    break;
+                    bool success = await TryHttp($"{attempt}://{uri}/{HTTP_ROUTE}", remotePortForwards);
+                    if (success)
+                    {
+                        await Task.Delay(-1);
+                        return;
+                    }
+                }
+                else if (attempt.Contains("ws"))
+                {
+                    bool success = await TryWs($"{attempt}://{uri}/{WS_ROUTE}", remotePortForwards);
+                    if (success)
+                    {
+                       await Task.Delay(-1);
+                       return;
+                    }
                 }
             }
-            else if (attempt.Contains("ws"))
+
+            Console.WriteLine("All connection attempts failed.");
+        }
+
+        private static async Task<bool> TryHttp(string url, string[] remotePortForwards)
+        {
+            try
             {
-                bool success = await TryWs(attempt + "://" + uri);
-                if (success)
-                {
-                    break;
-                }
+                Console.WriteLine($"[HTTP] Trying {url}");
+                var httpMessengerClient = new HTTPMessengerClient(url);
+                httpMessengerClient.ConnectAsync();
+                StartRemotePortForwardsAsync(httpMessengerClient, remotePortForwards);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[HTTP] Failed to connect to {url}: {ex}");
+                return false;
             }
         }
-    }
 
-    private static async Task<bool> TryHttp(string url)
-    {
-        try
+        private static async Task<bool> TryWs(string url, string[] remotePortForwards)
         {
-            HTTPMessengerClient httpMessengerClient = new HTTPMessengerClient();
-            await httpMessengerClient.Connect($"{url}/socketio/?EIO=4&transport=polling");
-            return true;
+            try
+            {
+                Console.WriteLine($"[WebSocket] Trying {url}");
+                var webSocketMessengerClient = new WebSocketMessengerClient(url);
+                webSocketMessengerClient.ConnectAsync();
+                StartRemotePortForwardsAsync(webSocketMessengerClient, remotePortForwards);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[WebSocket] Failed to connect to {url}: {ex}");
+                return false;
+            }
         }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[!] Failed to connect to {url}");
-            return false;
-        }
-    }
 
-    private static async Task<bool> TryWs(string url)
-    {
-        try
+        private static async Task StartRemotePortForwardsAsync(MessengerClient messengerClient, string[] remotePortForwards)
         {
-            WebSocketMessengerClient webSocketMessengerClient = new WebSocketMessengerClient();
-            await webSocketMessengerClient.Connect($"{url}/socketio/?EIO=4&transport=websocket");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[!] Failed to connect to {url}");
-            return false;
-        }
-    }
+            foreach (var config in remotePortForwards)
+            {
+                try
+                {
+                    var forwarder = new RemotePortForwarder(messengerClient, config);
+                    _ = forwarder.StartAsync(); // Fire-and-forget to start each forwarder concurrently
+                    Console.WriteLine($"Started RemotePortForwarder with config: {config}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to start RemotePortForwarder with config {config}: {ex.Message}");
+                }
+            }
 
-    public static bool ValidateServerCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
-    {
-        return true; // Always accept
+            // Keep the main thread alive while the forwarders are running.
+        }
+
+        private static bool ValidateServerCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
+        {
+            return true; // Always accept
+        }
     }
 }
