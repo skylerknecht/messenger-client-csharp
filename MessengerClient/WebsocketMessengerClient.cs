@@ -85,30 +85,24 @@ namespace MessengerClient
         /// <param name="message">The parsed message.</param>
         public override async Task HandleMessageAsync(Message message)
         {
-            Console.WriteLine($"Received message: {message}");
             switch (message)
             {
                 case InitiateForwarderClientReqMessage reqMessage:
-                    Console.WriteLine("InitiateForwarderClientReq message received");
                     await HandleInitiateForwarderClientReqAsync(reqMessage);
                     break;
 
                 case InitiateForwarderClientRepMessage repMessage:
-                    Console.WriteLine("InitiateForwarderClientRep message received");
                     _ = StreamAsync(repMessage.ForwarderClientId);
                     break;
 
                 case SendDataMessage sendDataMessage:
-                    Console.WriteLine("SendDataMessage message received");
                     if (ForwarderClients.TryGetValue(sendDataMessage.ForwarderClientId, out var client))
                     {
-                        Console.WriteLine("sending data");
                         await client.GetStream().WriteAsync(sendDataMessage.Data, 0, sendDataMessage.Data.Length);
                     }
                     break;
 
                 case CheckInMessage checkInMessage:
-                    Console.WriteLine($"Check-In Message: Messenger ID: {checkInMessage.MessengerId}");
                     break;
 
                 default:
@@ -123,7 +117,6 @@ namespace MessengerClient
         /// <param name="messageData">The byte array containing the message data.</param>
         public override async Task SendDownstreamMessageAsync(byte[] messageData)
         {
-            Console.WriteLine($"sending {_webSocket.State == WebSocketState.Open}");
             _messageQueue.Enqueue(new ArraySegment<byte>(messageData));
         }
 

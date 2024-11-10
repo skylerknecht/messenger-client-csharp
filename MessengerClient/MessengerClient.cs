@@ -36,7 +36,6 @@ namespace MessengerClient
             try
             {
                 var client = new TcpClient();
-                Console.WriteLine($"{message.IpAddress} {message.Port}");
                 await client.ConnectAsync(message.IpAddress, message.Port);
                 ForwarderClients[message.ForwarderClientId] = client;
 
@@ -51,7 +50,6 @@ namespace MessengerClient
             }
             catch (Exception ex) 
             {
-                Console.WriteLine(ex);
                 var downstreamMessage = MessageBuilder.InitiateForwarderClientRep(
                     message.ForwarderClientId, string.Empty, 0, 0, 1);
                 await SendDownstreamMessageAsync(downstreamMessage);

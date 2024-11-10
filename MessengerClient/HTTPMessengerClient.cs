@@ -101,7 +101,6 @@ namespace MessengerClient
                     break;
 
                 case InitiateForwarderClientRepMessage repMessage:
-                    Console.WriteLine("InitiateForwarderClientRep message received");
                     _ = StreamAsync(repMessage.ForwarderClientId);
                     break;
 
@@ -113,7 +112,6 @@ namespace MessengerClient
                     break;
 
                 case CheckInMessage checkInMessage:
-                    Console.WriteLine($"Check-In Message: Messenger ID: {checkInMessage.MessengerId}");
                     break;
 
                 default:

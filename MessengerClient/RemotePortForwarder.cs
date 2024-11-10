@@ -55,7 +55,6 @@ namespace MessengerClient
         private async Task HandleClientAsync(TcpClient client)
         {
             var clientId = Guid.NewGuid().ToString();
-            Console.WriteLine($"Client {clientId} connected.");
 
             var downstreamMessage = MessageBuilder.InitiateForwarderClientReq(
                 clientId,
