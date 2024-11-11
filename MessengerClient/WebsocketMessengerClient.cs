@@ -13,13 +13,15 @@ namespace MessengerClient
     public class WebSocketMessengerClient : MessengerClient
     {
         private readonly Uri _uri;
+        private readonly byte[] _encryptionKey;
         private ClientWebSocket _webSocket;
         private ConcurrentQueue<ArraySegment<byte>> _messageQueue = new ConcurrentQueue<ArraySegment<byte>>();
         private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
 
-        public WebSocketMessengerClient(string uri)
+        public WebSocketMessengerClient(string uri, byte[] encryptionKey)
         {
             _uri = new Uri(uri);
+            _encryptionKey = encryptionKey;
             _webSocket = new ClientWebSocket();
         }
 
@@ -51,33 +53,51 @@ namespace MessengerClient
         private async Task ReceiveMessagesAsync()
         {
             var buffer = new byte[4096];
+            var messageBuffer = new MemoryStream(); // To accumulate fragmented messages
+
             while (_webSocket.State == WebSocketState.Open)
             {
-                var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-
-                if (result.MessageType == WebSocketMessageType.Close)
+                try
                 {
-                    Console.WriteLine("WebSocket connection closed.");
-                    break;
+                    var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        Console.WriteLine("WebSocket connection closed.");
+                        break;
+                    }
+
+                    messageBuffer.Write(buffer, 0, result.Count);
+
+                    if (result.EndOfMessage)
+                    {
+                        // The entire message has been received
+                        byte[] messageData = messageBuffer.ToArray();
+                        messageBuffer.SetLength(0); // Reset buffer
+
+                        if (result.MessageType == WebSocketMessageType.Binary)
+                        {
+                            byte[] decryptedMessageData = Crypto.Decrypt(_encryptionKey, messageData);
+
+                            try
+                            {
+                                var message = MessageParser.ParseMessage(decryptedMessageData);
+                                _ = HandleMessageAsync(message);
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"Error parsing message: {ex.Message}");
+                            }
+                        }
+                    }
                 }
-
-                if (result.MessageType == WebSocketMessageType.Binary)
+                catch (Exception ex)
                 {
-                    var messageData = new byte[result.Count];
-                    Array.Copy(buffer, messageData, result.Count);
-
-                    try
-                    {
-                        var message = MessageParser.ParseMessage(messageData);
-                        _ = HandleMessageAsync(message);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error parsing message: {ex.Message}");
-                    }
+                    Console.WriteLine($"Error receiving message: {ex.Message}");
                 }
             }
         }
+
 
         /// <summary>
         /// Handles incoming messages based on their type.
@@ -126,7 +146,8 @@ namespace MessengerClient
             {
                 while (_messageQueue.TryDequeue(out var message))
                 {
-                    await ws.SendAsync(message, WebSocketMessageType.Binary, true, token);
+                    byte[] encryptedMessage = Crypto.Encrypt(_encryptionKey, message);
+                    await ws.SendAsync(new ArraySegment<byte>(encryptedMessage), WebSocketMessageType.Binary, true, token);
                 }
                 await Task.Delay(10); // Adjust delay as necessary
             }

@@ -13,6 +13,7 @@ namespace MessengerClient
         private const string HTTP_ROUTE = "socketio/?EIO=4&transport=polling";
         private const string WS_ROUTE = "socketio/?EIO=4&transport=websocket";
         private const string USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:128.0) Gecko/20100101 Firefox/128.0";
+        private byte[] encryption_key = null;
 
         public static async Task Main(string[] args)
         {
@@ -20,18 +21,19 @@ namespace MessengerClient
 
             if (args.Length < 1)
             {
-                Console.WriteLine("Usage: Program <URL> [remote_port_forwards...]");
+                Console.WriteLine("Usage: Program <URL> <Encryption_Key> [remote_port_forwards...]");
                 return;
             }
 
             string uri = args[0];
+            byte[] encryption_key = Crypto.Hash(args[1]);
 
             // Handling `remotePortForwards` without slicing
             string[] remotePortForwards;
             if (args.Length > 1)
             {
-                remotePortForwards = new string[args.Length - 1];
-                Array.Copy(args, 1, remotePortForwards, 0, args.Length - 1);
+                remotePortForwards = new string[args.Length - 2];
+                Array.Copy(args, 1, remotePortForwards, 0, args.Length - 2);
             }
             else
             {
@@ -57,7 +59,7 @@ namespace MessengerClient
             {
                 if (attempt.Contains("http"))
                 {
-                    bool success = await TryHttp($"{attempt}://{uri}/{HTTP_ROUTE}", remotePortForwards);
+                    bool success = await TryHttp($"{attempt}://{uri}/{HTTP_ROUTE}", encryption_key, remotePortForwards);
                     if (success)
                     {
                         await Task.Delay(-1);
@@ -66,7 +68,7 @@ namespace MessengerClient
                 }
                 else if (attempt.Contains("ws"))
                 {
-                    bool success = await TryWs($"{attempt}://{uri}/{WS_ROUTE}", remotePortForwards);
+                    bool success = await TryWs($"{attempt}://{uri}/{WS_ROUTE}", encryption_key, remotePortForwards);
                     if (success)
                     {
                        await Task.Delay(-1);
@@ -78,12 +80,12 @@ namespace MessengerClient
             Console.WriteLine("All connection attempts failed.");
         }
 
-        private static async Task<bool> TryHttp(string url, string[] remotePortForwards)
+        private static async Task<bool> TryHttp(string url, byte[] encryptionKey, string[] remotePortForwards)
         {
             try
             {
                 Console.WriteLine($"[HTTP] Trying {url}");
-                var httpMessengerClient = new HTTPMessengerClient(url);
+                var httpMessengerClient = new HTTPMessengerClient(url, encryptionKey);
                 httpMessengerClient.ConnectAsync();
                 StartRemotePortForwardsAsync(httpMessengerClient, remotePortForwards);
                 return true;
@@ -95,12 +97,12 @@ namespace MessengerClient
             }
         }
 
-        private static async Task<bool> TryWs(string url, string[] remotePortForwards)
+        private static async Task<bool> TryWs(string url, byte[] encryptionKey, string[] remotePortForwards)
         {
             try
             {
                 Console.WriteLine($"[WebSocket] Trying {url}");
-                var webSocketMessengerClient = new WebSocketMessengerClient(url);
+                var webSocketMessengerClient = new WebSocketMessengerClient(url, encryptionKey);
                 webSocketMessengerClient.ConnectAsync();
                 StartRemotePortForwardsAsync(webSocketMessengerClient, remotePortForwards);
                 return true;

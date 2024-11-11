@@ -10,13 +10,15 @@ namespace MessengerClient
     {
         private readonly string _uri;
         private readonly HttpClient _httpClient;
+        private readonly byte[] _encryptionKey;
         private readonly ConcurrentQueue<byte[]> DownstreamMessages;
         private string MessengerId;
 
-        public HTTPMessengerClient(string uri)
+        public HTTPMessengerClient(string uri, byte[] encryptionKey)
         {
             _uri = uri;
             _httpClient = new HttpClient();
+            _encryptionKey = encryptionKey;
             DownstreamMessages = new ConcurrentQueue<byte[]>();
         }
 
@@ -46,13 +48,15 @@ namespace MessengerClient
                 try
                 {
                     // Collect pending downstream messages
-                    var downstreamPayload = MessageBuilder.CheckIn(MessengerId);
+                    var downstreamMessages = MessageBuilder.CheckIn(MessengerId);
                     while (DownstreamMessages.TryDequeue(out var message))
                     {
-                        downstreamPayload = CombineArrays(downstreamPayload, message);
+                        downstreamMessages = CombineArrays(downstreamMessages, message);
                     }
 
-                    var content = new ByteArrayContent(downstreamPayload);
+                    var encryptedDownstreamMessages = Crypto.Encrypt(_encryptionKey, downstreamMessages);
+                    HttpContent content = new ByteArrayContent(encryptedDownstreamMessages);
+                    content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
                     var response = await _httpClient.PostAsync(_uri, content);
 
                     if (!response.IsSuccessStatusCode)
@@ -61,8 +65,9 @@ namespace MessengerClient
                         break;
                     }
 
-                    var responseData = await response.Content.ReadAsByteArrayAsync();
-                    var messages = MessageParser.ParseMessages(responseData);
+                    var encryptedResponseData = await response.Content.ReadAsByteArrayAsync();
+                    var decryptedResponseData = Crypto.Decrypt(_encryptionKey, encryptedResponseData);
+                    var messages = MessageParser.ParseMessages(decryptedResponseData);
 
                     foreach (var message in messages)
                     {
