@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -11,15 +12,24 @@ namespace MessengerClient
         private readonly string _uri;
         private readonly HttpClient _httpClient;
         private readonly byte[] _encryptionKey;
-        private readonly ConcurrentQueue<byte[]> DownstreamMessages;
-        private string MessengerId;
+        private readonly ConcurrentQueue<byte[]> _downstreamMessages;
+        private string _messengerId;
 
-        public HTTPMessengerClient(string uri, byte[] encryptionKey)
+        public HTTPMessengerClient(string uri, byte[] encryptionKey, IWebProxy proxy = null)
         {
             _uri = uri;
-            _httpClient = new HttpClient();
             _encryptionKey = encryptionKey;
-            DownstreamMessages = new ConcurrentQueue<byte[]>();
+
+            // Configure HttpClient to use the proxy if provided
+            var handler = new HttpClientHandler();
+            if (proxy != null)
+            {
+                handler.Proxy = proxy;
+                handler.UseProxy = true;
+            }
+
+            _httpClient = new HttpClient(handler);
+            _downstreamMessages = new ConcurrentQueue<byte[]>();
         }
 
         public override async Task ConnectAsync()
@@ -28,8 +38,8 @@ namespace MessengerClient
             {
                 Console.WriteLine($"Connecting to HTTP server at {_uri}");
                 var response = await _httpClient.GetStringAsync(_uri);
-                MessengerId = response.Trim(); // Assuming server returns a unique messenger ID.
-                Console.WriteLine($"Connected to server with Messenger ID: {MessengerId}");
+                _messengerId = response.Trim(); // Assuming server returns a unique messenger ID.
+                Console.WriteLine($"Connected to server with Messenger ID: {_messengerId}");
 
                 // Start polling for new messages
                 await PollServerAsync();
@@ -48,8 +58,8 @@ namespace MessengerClient
                 try
                 {
                     // Collect pending downstream messages
-                    var downstreamMessages = MessageBuilder.CheckIn(MessengerId);
-                    while (DownstreamMessages.TryDequeue(out var message))
+                    var downstreamMessages = MessageBuilder.CheckIn(_messengerId);
+                    while (_downstreamMessages.TryDequeue(out var message))
                     {
                         downstreamMessages = CombineArrays(downstreamMessages, message);
                     }
@@ -88,7 +98,7 @@ namespace MessengerClient
         {
             try
             {
-                DownstreamMessages.Enqueue(messageData);
+                _downstreamMessages.Enqueue(messageData);
             }
             catch (Exception ex)
             {

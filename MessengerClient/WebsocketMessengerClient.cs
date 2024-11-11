@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
-using System.Runtime.InteropServices.ComTypes;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,15 +14,23 @@ namespace MessengerClient
     {
         private readonly Uri _uri;
         private readonly byte[] _encryptionKey;
+        private readonly IWebProxy _proxy; // Added proxy parameter
         private ClientWebSocket _webSocket;
         private ConcurrentQueue<ArraySegment<byte>> _messageQueue = new ConcurrentQueue<ArraySegment<byte>>();
         private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
 
-        public WebSocketMessengerClient(string uri, byte[] encryptionKey)
+        public WebSocketMessengerClient(string uri, byte[] encryptionKey, IWebProxy proxy = null)
         {
             _uri = new Uri(uri);
             _encryptionKey = encryptionKey;
+            _proxy = proxy; // Assign proxy
             _webSocket = new ClientWebSocket();
+
+            // Apply proxy if provided
+            if (_proxy != null)
+            {
+                _webSocket.Options.Proxy = _proxy;
+            }
         }
 
         /// <summary>
@@ -36,7 +44,7 @@ namespace MessengerClient
                 await _webSocket.ConnectAsync(_uri, CancellationToken.None);
                 Console.WriteLine("Connected!");
 
-                // Start receiving messages
+                // Start receiving and sending tasks
                 var receivingTask = ReceiveMessagesAsync();
                 var sendingTask = SendMessages(_webSocket, _cancellationTokenSource.Token);
                 await Task.WhenAll(receivingTask, sendingTask);
@@ -97,7 +105,6 @@ namespace MessengerClient
                 }
             }
         }
-
 
         /// <summary>
         /// Handles incoming messages based on their type.
