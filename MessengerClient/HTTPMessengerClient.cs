@@ -1,8 +1,9 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace MessengerClient
@@ -12,7 +13,7 @@ namespace MessengerClient
         private readonly string _uri;
         private readonly HttpClient _httpClient;
         private readonly byte[] _encryptionKey;
-        private readonly ConcurrentQueue<byte[]> _downstreamMessages;
+        private readonly ConcurrentQueue<object> _downstreamMessages;
         private string _messengerId;
 
         public HTTPMessengerClient(string uri, byte[] encryptionKey, IWebProxy proxy = null)
@@ -29,7 +30,7 @@ namespace MessengerClient
             }
 
             _httpClient = new HttpClient(handler);
-            _downstreamMessages = new ConcurrentQueue<byte[]>();
+            _downstreamMessages = new ConcurrentQueue<object>();
         }
 
         public override async Task ConnectAsync()
@@ -37,16 +38,37 @@ namespace MessengerClient
             try
             {
                 Console.WriteLine($"Connecting to HTTP server at {_uri}");
-                var response = await _httpClient.GetStringAsync(_uri);
-                _messengerId = response.Trim(); // Assuming server returns a unique messenger ID.
-                Console.WriteLine($"Connected to server with Messenger ID: {_messengerId}");
 
+                // 1) Build and send the CheckInMessage
+                var downstreamMessage = MessageBuilder.SerializeMessage(_encryptionKey, new CheckInMessage(""));
+                HttpContent content = new ByteArrayContent(downstreamMessage);
+                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+                var response = await _httpClient.PostAsync(_uri, content);
+
+                // 2) Read the response into a byte array
+                byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
+
+                // 3) Parse the response bytes using DeserializeMessage
+                var (_, parsedMessage) = MessageParser.DeserializeMessage(_encryptionKey, responseBytes);
+
+                // 4) Check if it's a CheckInMessage and grab the MessengerId
+                if (parsedMessage is CheckInMessage checkInMsg)
+                {
+                    _messengerId = checkInMsg.MessengerId;
+                    Console.WriteLine($"Connected to server with Messenger ID: {_messengerId}");
+                }
+                else
+                {
+                    throw new InvalidOperationException(
+                        $"Expected a CheckInMessage, but got {parsedMessage.GetType().Name}"
+                    );
+                }
                 // Start polling for new messages
                 await PollServerAsync();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error connecting to server: {ex.Message}");
+                Console.WriteLine($"Error connecting to server: {ex}");
                 throw;
             }
         }
@@ -57,15 +79,21 @@ namespace MessengerClient
             {
                 try
                 {
-                    // Collect pending downstream messages
-                    var downstreamMessages = MessageBuilder.CheckIn(_messengerId);
+                    // Start with an empty array
+                    var downstreamMessages = new List<object>();
+
+                    // Always append a CheckInMessage first (if that's what you intend)
+                    CheckInMessage checkInMessage = new CheckInMessage(_messengerId);
+                    downstreamMessages.Add(checkInMessage);
+
+                    // Then dequeue and append each queued message
                     while (_downstreamMessages.TryDequeue(out var message))
                     {
-                        downstreamMessages = CombineArrays(downstreamMessages, message);
+                        downstreamMessages.Add(message);
                     }
 
-                    var encryptedDownstreamMessages = Crypto.Encrypt(_encryptionKey, downstreamMessages);
-                    HttpContent content = new ByteArrayContent(encryptedDownstreamMessages);
+                    // Now downstreamMessages contains all messages concatenated
+                    HttpContent content = new ByteArrayContent(SerializeMessages(_encryptionKey, downstreamMessages));
                     content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
                     var response = await _httpClient.PostAsync(_uri, content);
 
@@ -75,9 +103,8 @@ namespace MessengerClient
                         break;
                     }
 
-                    var encryptedResponseData = await response.Content.ReadAsByteArrayAsync();
-                    var decryptedResponseData = Crypto.Decrypt(_encryptionKey, encryptedResponseData);
-                    var messages = MessageParser.ParseMessages(decryptedResponseData);
+                    var responseData = await response.Content.ReadAsByteArrayAsync();
+                    var messages = DeserializeMessages(_encryptionKey, responseData);
 
                     foreach (var message in messages)
                     {
@@ -94,11 +121,11 @@ namespace MessengerClient
             }
         }
 
-        public override async Task SendDownstreamMessageAsync(byte[] messageData)
+        public override async Task SendDownstreamMessageAsync(object message)
         {
             try
             {
-                _downstreamMessages.Enqueue(messageData);
+                _downstreamMessages.Enqueue(message);
             }
             catch (Exception ex)
             {
@@ -106,16 +133,17 @@ namespace MessengerClient
             }
         }
 
-        public override async Task HandleMessageAsync(Message message)
+        public override async Task HandleMessageAsync(object message)
         {
             // Correctly process the parsed message object
             switch (message)
             {
-                case InitiateForwarderClientReqMessage reqMessage:
+                case InitiateForwarderClientReq reqMessage:
+                    Console.WriteLine(message);
                     await HandleInitiateForwarderClientReqAsync(reqMessage);
                     break;
 
-                case InitiateForwarderClientRepMessage repMessage:
+                case InitiateForwarderClientRep repMessage:
                     _ = StreamAsync(repMessage.ForwarderClientId);
                     break;
 
@@ -133,14 +161,6 @@ namespace MessengerClient
                     Console.WriteLine("Unknown message type received");
                     break;
             }
-        }
-
-        private static byte[] CombineArrays(byte[] first, byte[] second)
-        {
-            var result = new byte[first.Length + second.Length];
-            Buffer.BlockCopy(first, 0, result, 0, first.Length);
-            Buffer.BlockCopy(second, 0, result, first.Length, second.Length);
-            return result;
         }
     }
 }

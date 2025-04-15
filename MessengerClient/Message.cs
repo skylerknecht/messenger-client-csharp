@@ -1,268 +1,410 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Text;
 using System.Linq;
+using System.Text;
+using System.Security.Cryptography;
 
-namespace MessengerClient
+
+// ----------------------------------------------------------------------
+// 1. Message Classes (now using int instead of uint)
+// ----------------------------------------------------------------------
+public class CheckInMessage
 {
-    public static class MessageParser
+    public string MessengerId { get; }
+    public CheckInMessage(string messengerId)
     {
-        public static int ReadUInt32(byte[] data, ref int offset)
-        {
-            if (data.Length < offset + 4)
-                throw new ArgumentException("Insufficient data to read UInt32");
+        MessengerId = messengerId;
+    }
+}
 
-            int value = BitConverter.ToInt32(data.Skip(offset).Take(4).Reverse().ToArray(), 0); // Big-endian
-            offset += 4;
-            return value;
-        }
+public class InitiateForwarderClientReq
+{
+    public string ForwarderClientId { get; }
+    public string IpAddress { get; }
+    public int Port { get; }
 
-        public static string ReadString(byte[] data, ref int offset)
-        {
-            int length = ReadUInt32(data, ref offset);
-            if (data.Length < offset + length)
-                throw new ArgumentException("Insufficient data to read string");
+    public InitiateForwarderClientReq(string forwarderClientId, string ipAddress, int port)
+    {
+        ForwarderClientId = forwarderClientId;
+        IpAddress = ipAddress;
+        Port = port;
+    }
+}
 
-            string value = Encoding.UTF8.GetString(data, offset, length);
-            offset += length;
-            return value;
-        }
+public class InitiateForwarderClientRep
+{
+    public string ForwarderClientId { get; }
+    public string BindAddress { get; }
+    public int BindPort { get; }
+    public int AddressType { get; }
+    public int Reason { get; }
 
-        public static HeaderInfo ParseHeader(byte[] data, ref int offset)
-        {
-            int messageType = ReadUInt32(data, ref offset);
-            int messageLength = ReadUInt32(data, ref offset);
+    public InitiateForwarderClientRep(
+        string forwarderClientId,
+        string bindAddress,
+        int bindPort,
+        int addressType,
+        int reason)
+    {
+        ForwarderClientId = forwarderClientId;
+        BindAddress = bindAddress;
+        BindPort = bindPort;
+        AddressType = addressType;
+        Reason = reason;
+    }
+}
 
-            return new HeaderInfo
-            {
-                MessageType = messageType,
-                MessageLength = messageLength
-            };
-        }
+public class SendDataMessage
+{
+    public string ForwarderClientId { get; }
+    public byte[] Data { get; }
 
-        public static Message ParseMessage(byte[] data)
-        {
-            int offset = 0;
-            var header = ParseHeader(data, ref offset);
+    public SendDataMessage(string forwarderClientId, byte[] data)
+    {
+        ForwarderClientId = forwarderClientId;
+        Data = data;
+    }
+}
 
-            int bodyLength = header.MessageLength - 8; // Subtract 8 bytes for the header
-            if (offset + bodyLength > data.Length)
-                throw new ArgumentException("Message body length exceeds available data");
 
-            byte[] body = new byte[bodyLength];
-            Array.Copy(data, offset, body, 0, bodyLength);
+// ----------------------------------------------------------------------
+// 2. MessageParser: Reading/Decrypting Bytes
+// ----------------------------------------------------------------------
+public static class MessageParser
+{
+    /// <summary>
+    /// Read the first 4 bytes of <paramref name="data"/> as a big-endian uint32.
+    /// Returns (uintValue, leftoverBytes).
+    /// </summary>
+    public static (uint Value, byte[] Remainder) ReadUInt32(byte[] data)
+    {
+        if (data.Length < 4)
+            throw new ArgumentException("Not enough bytes to read a 32-bit value.");
 
-            switch (header.MessageType)
-            {
-                case 0x01:
-                    return ParseInitiateForwarderClientReq(body);
-                case 0x02:
-                    return ParseInitiateForwarderClientRep(body);
-                case 0x03:
-                    return ParseSendData(body);
-                case 0x04:
-                    return ParseCheckIn(body);
-                default:
-                    throw new InvalidOperationException($"Unknown message type: {header.MessageType}");
-            }
-        }
+        // Big-endian decode into a uint
+        uint value = (uint)((data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]);
+        byte[] remainder = data.Skip(4).ToArray();
 
-        public static List<Message> ParseMessages(byte[] data)
-        {
-            int offset = 0;
-            var messages = new List<Message>();
-
-            while (offset < data.Length)
-            {
-                var header = ParseHeader(data, ref offset);
-                int messageLength = header.MessageLength;
-
-                if (offset + messageLength - 8 > data.Length)
-                    throw new ArgumentException("Message body length exceeds available data");
-
-                byte[] fullMessage = new byte[messageLength];
-                Array.Copy(data, offset - 8, fullMessage, 0, messageLength);
-
-                messages.Add(ParseMessage(fullMessage));
-                offset += messageLength - 8;
-            }
-
-            return messages;
-        }
-
-        private static Message ParseInitiateForwarderClientReq(byte[] data)
-        {
-            int offset = 0;
-            var forwarderClientId = ReadString(data, ref offset);
-            var ipAddress = ReadString(data, ref offset);
-            var port = ReadUInt32(data, ref offset);
-
-            return new InitiateForwarderClientReqMessage
-            {
-                MessageType = 0x01,
-                ForwarderClientId = forwarderClientId,
-                IpAddress = ipAddress,
-                Port = port
-            };
-        }
-
-        private static Message ParseInitiateForwarderClientRep(byte[] data)
-        {
-            int offset = 0;
-            var forwarderClientId = ReadString(data, ref offset);
-            var bindAddress = ReadString(data, ref offset);
-            var bindPort = ReadUInt32(data, ref offset);
-            var addressType = ReadUInt32(data, ref offset);
-            var reason = ReadUInt32(data, ref offset);
-
-            return new InitiateForwarderClientRepMessage
-            {
-                MessageType = 0x02,
-                ForwarderClientId = forwarderClientId,
-                BindAddress = bindAddress,
-                BindPort = bindPort,
-                AddressType = addressType,
-                Reason = reason
-            };
-        }
-
-        private static Message ParseSendData(byte[] data)
-        {
-            int offset = 0;
-            var forwarderClientId = ReadString(data, ref offset);
-            var encodedData = ReadString(data, ref offset);
-            var decodedData = Convert.FromBase64String(encodedData);
-
-            return new SendDataMessage
-            {
-                MessageType = 0x03,
-                ForwarderClientId = forwarderClientId,
-                Data = decodedData
-            };
-        }
-
-        private static Message ParseCheckIn(byte[] data)
-        {
-            int offset = 0;
-            var messengerId = ReadString(data, ref offset);
-
-            return new CheckInMessage
-            {
-                MessageType = 0x04,
-                MessengerId = messengerId
-            };
-        }
+        return (value, remainder);
     }
 
-    public static class MessageBuilder
+    /// <summary>
+    /// Reads a length-prefixed UTF-8 string:
+    ///  1) read a uint32 length
+    ///  2) read 'length' bytes
+    ///  3) decode UTF-8
+    /// Returns (stringValue, leftoverBytes).
+    /// </summary>
+    public static (string Value, byte[] Remainder) ReadString(byte[] data)
     {
-        public static byte[] WriteUInt32(int value)
-        {
-            return BitConverter.GetBytes(value).Reverse().ToArray(); // Big-endian
-        }
+        var (length, remainder) = ReadUInt32(data);
+        if (remainder.Length < length)
+            throw new ArgumentException($"Not enough bytes to read string of length {length}.");
 
-        public static byte[] WriteString(string value)
-        {
-            var encoded = Encoding.UTF8.GetBytes(value);
-            var length = WriteUInt32(encoded.Length);
-            return CombineArrays(length, encoded);
-        }
+        string s = Encoding.UTF8.GetString(remainder, 0, (int)length);
+        byte[] leftover = remainder.Skip((int)length).ToArray();
 
-        public static byte[] Header(int messageType, byte[] value)
-        {
-            var messageLength = 8 + value.Length;
-            return CombineArrays(WriteUInt32(messageType), WriteUInt32(messageLength), value);
-        }
-
-        public static byte[] InitiateForwarderClientReq(string forwarderClientId, string ipAddress, int port)
-        {
-            var body = CombineArrays(
-                WriteString(forwarderClientId),
-                WriteString(ipAddress),
-                WriteUInt32(port)
-            );
-            return Header(0x01, body);
-        }
-
-        public static byte[] InitiateForwarderClientRep(string forwarderClientId, string bindAddress, int bindPort, int addressType, int reason)
-        {
-            var body = CombineArrays(
-                WriteString(forwarderClientId),
-                WriteString(bindAddress),
-                WriteUInt32(bindPort),
-                WriteUInt32(addressType),
-                WriteUInt32(reason)
-            );
-            return Header(0x02, body);
-        }
-
-        public static byte[] SendData(string forwarderClientId, byte[] data)
-        {
-            var encodedData = Convert.ToBase64String(data);
-            var body = CombineArrays(
-                WriteString(forwarderClientId),
-                WriteString(encodedData)
-            );
-            return Header(0x03, body);
-        }
-
-        public static byte[] CheckIn(string messengerId)
-        {
-            var body = WriteString(messengerId);
-            return Header(0x04, body);
-        }
-
-        private static byte[] CombineArrays(params byte[][] arrays)
-        {
-            int totalLength = arrays.Sum(arr => arr.Length);
-            var result = new byte[totalLength];
-            int offset = 0;
-
-            foreach (var arr in arrays)
-            {
-                Array.Copy(arr, 0, result, offset, arr.Length);
-                offset += arr.Length;
-            }
-
-            return result;
-        }
+        return (s, leftover);
     }
 
-    public class HeaderInfo
+    /// <summary>
+    /// Parses the payload of a 0x04 'CheckIn' message (no decryption).
+    /// </summary>
+    public static CheckInMessage ParseCheckIn(byte[] value)
     {
-        public int MessageType { get; set; }
-        public int MessageLength { get; set; }
+        var (messengerId, _) = ReadString(value);
+        return new CheckInMessage(messengerId);
     }
 
-    public abstract class Message
+    /// <summary>
+    /// Parses the payload of a 0x01 'InitiateForwarderClientReq' message.
+    /// </summary>
+    public static InitiateForwarderClientReq ParseInitiateForwarderClientReq(byte[] value)
     {
-        public int MessageType { get; set; }
+        var (forwarderClientId, remainder) = ReadString(value);
+        var (ipAddress, remainder2) = ReadString(remainder);
+        var (port, remainder3) = ReadUInt32(remainder2);
+
+        // cast uint -> int
+        return new InitiateForwarderClientReq(
+            forwarderClientId,
+            ipAddress,
+            (int)port
+        );
     }
 
-    public class InitiateForwarderClientReqMessage : Message
+    /// <summary>
+    /// Parses the payload of a 0x02 'InitiateForwarderClientRep' message.
+    /// </summary>
+    public static InitiateForwarderClientRep ParseInitiateForwarderClientRep(byte[] value)
     {
-        public string ForwarderClientId { get; set; }
-        public string IpAddress { get; set; }
-        public int Port { get; set; }
+        var (forwarderClientId, remainder) = ReadString(value);
+        var (bindAddress, remainder2) = ReadString(remainder);
+        var (bindPort, remainder3) = ReadUInt32(remainder2);
+        var (addressType, remainder4) = ReadUInt32(remainder3);
+        var (reason, remainder5) = ReadUInt32(remainder4);
+
+        // cast all uint -> int
+        return new InitiateForwarderClientRep(
+            forwarderClientId,
+            bindAddress,
+            (int)bindPort,
+            (int)addressType,
+            (int)reason
+        );
     }
 
-    public class InitiateForwarderClientRepMessage : Message
+    /// <summary>
+    /// Parses the payload of a 0x03 'SendDataMessage'.
+    /// </summary>
+    public static SendDataMessage ParseSendData(byte[] value)
     {
-        public string ForwarderClientId { get; set; }
-        public string BindAddress { get; set; }
-        public int BindPort { get; set; }
-        public int AddressType { get; set; }
-        public int Reason { get; set; }
+        var (forwarderClientId, remainder) = ReadString(value);
+        var (encodedData, remainder2) = ReadString(remainder);
+
+        byte[] rawData = Convert.FromBase64String(encodedData);
+        return new SendDataMessage(
+            forwarderClientId,
+            rawData
+        );
     }
 
-    public class SendDataMessage : Message
+    /// <summary>
+    /// High-level parse entrypoint:
+    ///   1) read the message_type (uint32)
+    ///   2) read the message_length (uint32)
+    ///   3) slice out the encrypted payload
+    ///   4) decrypt or parse plaintext
+    /// Returns (leftoverBytes, parsedMessage).
+    /// </summary>
+    public static (byte[] leftover, object parsedMessage) DeserializeMessage(
+        byte[] encryptionKey,
+        byte[] rawData)
     {
-        public string ForwarderClientId { get; set; }
-        public byte[] Data { get; set; }
+        // 1) Read the message type
+        var (messageType, dataAfterType) = ReadUInt32(rawData);
+
+        // 2) Read the total message length
+        var (messageLength, dataAfterLength) = ReadUInt32(dataAfterType);
+
+        // 3) Extract the (messageLength - 8) payload bytes
+        int payloadLen = (int)messageLength - 8;
+        if (dataAfterLength.Length < payloadLen)
+            throw new ArgumentException("Not enough bytes in data for the payload.");
+
+        byte[] payload = dataAfterLength.Take(payloadLen).ToArray();
+        byte[] leftover = dataAfterLength.Skip(payloadLen).ToArray();
+
+        // 4) Decrypt or parse plaintext, depending on message type
+        object parsedMsg;
+        switch (messageType)
+        {
+            case 0x01:
+                {
+                    byte[] decrypted = MessengerClient.Crypto.Decrypt(encryptionKey, payload);
+                    parsedMsg = ParseInitiateForwarderClientReq(decrypted);
+                    break;
+                }
+            case 0x02:
+                {
+                    byte[] decrypted = MessengerClient.Crypto.Decrypt(encryptionKey, payload);
+                    parsedMsg = ParseInitiateForwarderClientRep(decrypted);
+                    break;
+                }
+            case 0x03:
+                {
+                    byte[] decrypted = MessengerClient.Crypto.Decrypt(encryptionKey, payload);
+                    parsedMsg = ParseSendData(decrypted);
+                    break;
+                }
+            case 0x04:
+                {
+                    // According to the Python version, we do NOT decrypt for 0x04
+                    parsedMsg = ParseCheckIn(payload);
+                    break;
+                }
+            default:
+                throw new ArgumentException($"Unknown message type: 0x{messageType:X}");
+        }
+
+        return (leftover, parsedMsg);
+    }
+}
+
+
+// ----------------------------------------------------------------------
+// 3. MessageBuilder: Creating/Encrypting Bytes
+// ----------------------------------------------------------------------
+public static class MessageBuilder
+{
+    /// <summary>
+    /// Given a message object (one of our 4 types), build the fully formed
+    /// byte array (header + possibly encrypted payload).
+    /// </summary>
+    public static byte[] SerializeMessage(byte[] encryptionKey, object msg)
+    {
+        byte[] payload;
+        uint messageType;
+
+        switch (msg)
+        {
+            case InitiateForwarderClientReq req:
+                messageType = 0x01;
+                payload = MessengerClient.Crypto.Encrypt(
+                    encryptionKey,
+                    BuildInitiateForwarderClientReq(
+                        req.ForwarderClientId,
+                        req.IpAddress,
+                        req.Port
+                    )
+                );
+                break;
+
+            case InitiateForwarderClientRep rep:
+                messageType = 0x02;
+                payload = MessengerClient.Crypto.Encrypt(
+                    encryptionKey,
+                    BuildInitiateForwarderClientRep(
+                        rep.ForwarderClientId,
+                        rep.BindAddress,
+                        rep.BindPort,
+                        rep.AddressType,
+                        rep.Reason
+                    )
+                );
+                break;
+
+            case SendDataMessage sdm:
+                messageType = 0x03;
+                payload = MessengerClient.Crypto.Encrypt(
+                    encryptionKey,
+                    BuildSendData(
+                        sdm.ForwarderClientId,
+                        sdm.Data
+                    )
+                );
+                break;
+
+            case CheckInMessage cim:
+                messageType = 0x04;
+                // The Python code does not encrypt CheckInMessage
+                payload = BuildCheckInMessage(cim.MessengerId);
+                break;
+
+            default:
+                throw new ArgumentException($"Unknown message type: {msg.GetType().Name}");
+        }
+
+        return BuildMessage(messageType, payload);
     }
 
-    public class CheckInMessage : Message
+    /// <summary>
+    /// Packs [message_type, total_length, payload] together in big-endian format.
+    /// </summary>
+    public static byte[] BuildMessage(uint messageType, byte[] payload)
     {
-        public string MessengerId { get; set; }
+        // total_length = 8 (header) + payload length
+        uint messageLength = (uint)(8 + payload.Length);
+
+        // Build the 8-byte header (all big-endian)
+        byte[] header = new byte[8];
+        WriteUInt32(header, 0, messageType);    // message_type
+        WriteUInt32(header, 4, messageLength);  // total_length
+
+        // Concatenate header + payload
+        return Combine(header, payload);
+    }
+
+    /// <summary>
+    /// Encodes a string with a 4-byte length prefix (big-endian), plus UTF-8 data.
+    /// </summary>
+    public static byte[] BuildString(string value)
+    {
+        byte[] encoded = Encoding.UTF8.GetBytes(value);
+        byte[] lengthBytes = new byte[4];
+        WriteUInt32(lengthBytes, 0, (uint)encoded.Length);
+
+        return Combine(lengthBytes, encoded);
+    }
+
+    public static byte[] BuildCheckInMessage(string messengerId)
+    {
+        return BuildString(messengerId);
+    }
+
+    public static byte[] BuildInitiateForwarderClientReq(
+        string forwarderClientId,
+        string ipAddress,
+        int port)
+    {
+        var part1 = BuildString(forwarderClientId);
+        var part2 = BuildString(ipAddress);
+
+        // We'll still write it as a uint on the wire
+        byte[] part3 = new byte[4];
+        WriteUInt32(part3, 0, (uint)port);
+
+        return Combine(part1, part2, part3);
+    }
+
+    public static byte[] BuildInitiateForwarderClientRep(
+        string forwarderClientId,
+        string bindAddress,
+        int bindPort,
+        int addressType,
+        int reason)
+    {
+        var part1 = BuildString(forwarderClientId);
+        var part2 = BuildString(bindAddress);
+
+        // Next 3 fields => 3*4 bytes => 12 bytes
+        byte[] part3 = new byte[12];
+        WriteUInt32(part3, 0, (uint)bindPort);
+        WriteUInt32(part3, 4, (uint)addressType);
+        WriteUInt32(part3, 8, (uint)reason);
+
+        return Combine(part1, part2, part3);
+    }
+
+    public static byte[] BuildSendData(
+        string forwarderClientId,
+        byte[] data)
+    {
+        var part1 = BuildString(forwarderClientId);
+        string encodedData = Convert.ToBase64String(data);
+        var part2 = BuildString(encodedData);
+
+        return Combine(part1, part2);
+    }
+
+    // ----------------------------------------------------------------------
+    // Helper: Write a uint32 to a byte array in big-endian
+    // ----------------------------------------------------------------------
+    public static void WriteUInt32(byte[] buffer, int offset, uint value)
+    {
+        buffer[offset] = (byte)((value >> 24) & 0xFF);
+        buffer[offset + 1] = (byte)((value >> 16) & 0xFF);
+        buffer[offset + 2] = (byte)((value >> 8) & 0xFF);
+        buffer[offset + 3] = (byte)(value & 0xFF);
+    }
+
+    // ----------------------------------------------------------------------
+    // Helper: Concatenate multiple byte arrays
+    // ----------------------------------------------------------------------
+    public static byte[] Combine(params byte[][] arrays)
+    {
+        int totalLength = 0;
+        foreach (var arr in arrays)
+            totalLength += arr.Length;
+
+        byte[] result = new byte[totalLength];
+        int offset = 0;
+
+        foreach (var arr in arrays)
+        {
+            Buffer.BlockCopy(arr, 0, result, offset, arr.Length);
+            offset += arr.Length;
+        }
+
+        return result;
     }
 }

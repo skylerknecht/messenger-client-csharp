@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -16,7 +17,8 @@ namespace MessengerClient
         private readonly byte[] _encryptionKey;
         private readonly IWebProxy _proxy; // Added proxy parameter
         private ClientWebSocket _webSocket;
-        private ConcurrentQueue<ArraySegment<byte>> _messageQueue = new ConcurrentQueue<ArraySegment<byte>>();
+        private readonly ConcurrentQueue<object> _downstreamMessages;
+        private string _messengerId;
         private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
 
         public WebSocketMessengerClient(string uri, byte[] encryptionKey, IWebProxy proxy = null)
@@ -25,6 +27,8 @@ namespace MessengerClient
             _encryptionKey = encryptionKey;
             _proxy = proxy; // Assign proxy
             _webSocket = new ClientWebSocket();
+            _downstreamMessages = new ConcurrentQueue<object>();
+            _messengerId = String.Empty;
 
             // Apply proxy if provided
             if (_proxy != null)
@@ -46,7 +50,7 @@ namespace MessengerClient
 
                 // Start receiving and sending tasks
                 var receivingTask = ReceiveMessagesAsync();
-                var sendingTask = SendMessages(_webSocket, _cancellationTokenSource.Token);
+                var sendingTask = SendMessages(_cancellationTokenSource.Token);
                 await Task.WhenAll(receivingTask, sendingTask);
             }
             catch (Exception ex)
@@ -83,20 +87,22 @@ namespace MessengerClient
                         byte[] messageData = messageBuffer.ToArray();
                         messageBuffer.SetLength(0); // Reset buffer
 
-                        if (result.MessageType == WebSocketMessageType.Binary)
+                        //if (result.MessageType == WebSocketMessageType.Binary)
+                        //{
+                        try
                         {
-                            byte[] decryptedMessageData = Crypto.Decrypt(_encryptionKey, messageData);
+                            var messages = DeserializeMessages(_encryptionKey, messageData);
 
-                            try
-                            {
-                                var message = MessageParser.ParseMessage(decryptedMessageData);
-                                _ = HandleMessageAsync(message);
+                                foreach (var message in messages)
+                                {
+                                    await HandleMessageAsync(message); // Pass the parsed message here
+                                }
                             }
                             catch (Exception ex)
                             {
                                 Console.WriteLine($"Error parsing message: {ex.Message}");
                             }
-                        }
+                        //}
                     }
                 }
                 catch (Exception ex)
@@ -110,15 +116,15 @@ namespace MessengerClient
         /// Handles incoming messages based on their type.
         /// </summary>
         /// <param name="message">The parsed message.</param>
-        public override async Task HandleMessageAsync(Message message)
+        public override async Task HandleMessageAsync(object message)
         {
             switch (message)
             {
-                case InitiateForwarderClientReqMessage reqMessage:
+                case InitiateForwarderClientReq reqMessage:
                     await HandleInitiateForwarderClientReqAsync(reqMessage);
                     break;
 
-                case InitiateForwarderClientRepMessage repMessage:
+                case InitiateForwarderClientRep repMessage:
                     _ = StreamAsync(repMessage.ForwarderClientId);
                     break;
 
@@ -130,6 +136,7 @@ namespace MessengerClient
                     break;
 
                 case CheckInMessage checkInMessage:
+                    _messengerId = checkInMessage.MessengerId;
                     break;
 
                 default:
@@ -142,21 +149,30 @@ namespace MessengerClient
         /// Sends a downstream message to the WebSocket server.
         /// </summary>
         /// <param name="messageData">The byte array containing the message data.</param>
-        public override async Task SendDownstreamMessageAsync(byte[] messageData)
+        public override async Task SendDownstreamMessageAsync(object message)
         {
-            _messageQueue.Enqueue(new ArraySegment<byte>(messageData));
+            _downstreamMessages.Enqueue(message);
         }
 
-        private async Task SendMessages(ClientWebSocket ws, CancellationToken token)
+        private async Task SendMessages(CancellationToken token)
         {
             while (!token.IsCancellationRequested)
             {
-                while (_messageQueue.TryDequeue(out var message))
+                var downstreamMessages = new List<object>();
+
+                // Always append a CheckInMessage first (if that's what you intend)
+                CheckInMessage checkInMessage = new CheckInMessage(_messengerId);
+                downstreamMessages.Add(checkInMessage);
+
+                // Then dequeue and append each queued message
+                while (_downstreamMessages.TryDequeue(out var message))
                 {
-                    byte[] encryptedMessage = Crypto.Encrypt(_encryptionKey, message);
-                    await ws.SendAsync(new ArraySegment<byte>(encryptedMessage), WebSocketMessageType.Binary, true, token);
+                    downstreamMessages.Add(message);
                 }
-                await Task.Delay(10); // Adjust delay as necessary
+
+                ArraySegment<byte> content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, downstreamMessages));
+                await _webSocket.SendAsync(content, WebSocketMessageType.Binary, true, token);
+                await Task.Delay(10);
             }
         }
 

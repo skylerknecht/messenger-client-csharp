@@ -56,7 +56,7 @@ namespace MessengerClient
         {
             var clientId = Guid.NewGuid().ToString();
 
-            var downstreamMessage = MessageBuilder.InitiateForwarderClientReq(
+            var downstreamMessage = new InitiateForwarderClientReq(
                 clientId,
                 _destinationHost,
                 _destinationPort
