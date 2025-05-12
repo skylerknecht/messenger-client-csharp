@@ -15,7 +15,7 @@ namespace MessengerClient
     {
         private readonly Uri _uri;
         private readonly byte[] _encryptionKey;
-        private readonly IWebProxy _proxy; // Added proxy parameter
+        private readonly IWebProxy _proxy;
         private ClientWebSocket _webSocket;
         private readonly ConcurrentQueue<object> _downstreamMessages;
         private string _messengerId;
@@ -25,21 +25,17 @@ namespace MessengerClient
         {
             _uri = new Uri(uri);
             _encryptionKey = encryptionKey;
-            _proxy = proxy; // Assign proxy
+            _proxy = proxy; 
             _webSocket = new ClientWebSocket();
             _downstreamMessages = new ConcurrentQueue<object>();
             _messengerId = String.Empty;
 
-            // Apply proxy if provided
             if (_proxy != null)
             {
                 _webSocket.Options.Proxy = _proxy;
             }
         }
 
-        /// <summary>
-        /// Establishes a WebSocket connection to the server.
-        /// </summary>
         public override async Task ConnectAsync()
         {
             try
@@ -48,9 +44,8 @@ namespace MessengerClient
                 await _webSocket.ConnectAsync(_uri, CancellationToken.None);
                 Console.WriteLine("Connected!");
 
-                // Start receiving and sending tasks
                 var receivingTask = ReceiveMessagesAsync();
-                var sendingTask = SendMessages(_cancellationTokenSource.Token);
+                var sendingTask = SendMessagesAsync(_cancellationTokenSource.Token);
                 await Task.WhenAll(receivingTask, sendingTask);
             }
             catch (Exception ex)
@@ -59,13 +54,10 @@ namespace MessengerClient
             }
         }
 
-        /// <summary>
-        /// Receives messages from the WebSocket server.
-        /// </summary>
         private async Task ReceiveMessagesAsync()
         {
             var buffer = new byte[4096];
-            var messageBuffer = new MemoryStream(); // To accumulate fragmented messages
+            var messageBuffer = new MemoryStream(); 
 
             while (_webSocket.State == WebSocketState.Open)
             {
@@ -83,26 +75,25 @@ namespace MessengerClient
 
                     if (result.EndOfMessage)
                     {
-                        // The entire message has been received
                         byte[] messageData = messageBuffer.ToArray();
-                        messageBuffer.SetLength(0); // Reset buffer
+                        messageBuffer.SetLength(0); 
 
-                        //if (result.MessageType == WebSocketMessageType.Binary)
-                        //{
                         try
                         {
                             var messages = DeserializeMessages(_encryptionKey, messageData);
 
-                                foreach (var message in messages)
-                                {
-                                    await HandleMessageAsync(message); // Pass the parsed message here
-                                }
-                            }
-                            catch (Exception ex)
+                            foreach (var message in messages)
                             {
-                                Console.WriteLine($"Error parsing message: {ex.Message}");
+                                _ = Task.Run(async () =>
+                                {
+                                    await HandleMessageAsync(message);
+                                });                                
                             }
-                        //}
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error parsing message: {ex.Message}");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -112,10 +103,6 @@ namespace MessengerClient
             }
         }
 
-        /// <summary>
-        /// Handles incoming messages based on their type.
-        /// </summary>
-        /// <param name="message">The parsed message.</param>
         public override async Task HandleMessageAsync(object message)
         {
             switch (message)
@@ -125,7 +112,7 @@ namespace MessengerClient
                     break;
 
                 case InitiateForwarderClientRep repMessage:
-                    _ = StreamAsync(repMessage.ForwarderClientId);
+                    await StreamAsync(repMessage.ForwarderClientId);
                     break;
 
                 case SendDataMessage sendDataMessage:
@@ -145,40 +132,33 @@ namespace MessengerClient
             }
         }
 
-        /// <summary>
-        /// Sends a downstream message to the WebSocket server.
-        /// </summary>
-        /// <param name="messageData">The byte array containing the message data.</param>
         public override async Task SendDownstreamMessageAsync(object message)
         {
             _downstreamMessages.Enqueue(message);
         }
 
-        private async Task SendMessages(CancellationToken token)
+        private async Task SendMessagesAsync(CancellationToken token)
         {
             while (!token.IsCancellationRequested)
             {
-                var downstreamMessages = new List<object>();
+                if (_downstreamMessages.IsEmpty)
+                {
+                    await Task.Delay(10, token); // Wait briefly before rechecking
+                    continue;
+                }
 
-                // Always append a CheckInMessage first (if that's what you intend)
-                CheckInMessage checkInMessage = new CheckInMessage(_messengerId);
-                downstreamMessages.Add(checkInMessage);
+                var downstreamMessages = new List<object>{ new CheckInMessage(_messengerId) };
 
-                // Then dequeue and append each queued message
                 while (_downstreamMessages.TryDequeue(out var message))
                 {
                     downstreamMessages.Add(message);
                 }
 
-                ArraySegment<byte> content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, downstreamMessages));
+                var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, downstreamMessages));
                 await _webSocket.SendAsync(content, WebSocketMessageType.Binary, true, token);
-                await Task.Delay(10);
             }
         }
 
-        /// <summary>
-        /// Closes the WebSocket connection.
-        /// </summary>
         public async Task CloseAsync()
         {
             if (_webSocket.State == WebSocketState.Open)
