@@ -33,38 +33,58 @@ namespace MessengerClient
 
         public override async Task ConnectAsync()
         {
-            try
+            int retryDelaySeconds = 15;
+            int maxTotalWaitSeconds = 1800;
+            int elapsedSeconds = 0;
+
+            while (elapsedSeconds < maxTotalWaitSeconds)
             {
-                Console.WriteLine($"Connecting to HTTP server at {_uri}");
-
-                var downstreamMessage = MessageBuilder.SerializeMessage(_encryptionKey, new CheckInMessage(""));
-                HttpContent content = new ByteArrayContent(downstreamMessage);
-                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-                var response = await _httpClient.PostAsync(_uri, content);
-
-                byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
-
-                var (_, parsedMessage) = MessageParser.DeserializeMessage(_encryptionKey, responseBytes);
-
-                if (parsedMessage is CheckInMessage checkInMsg)
+                try
                 {
-                    _messengerId = checkInMsg.MessengerId;
-                    Console.WriteLine($"Connected to server with Messenger ID: {_messengerId}");
+                    Console.WriteLine($"Connecting to HTTP server at {_uri}");
+
+                    var downstreamMessage = MessageBuilder.SerializeMessage(_encryptionKey, new CheckInMessage(""));
+                    HttpContent content = new ByteArrayContent(downstreamMessage);
+                    content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+
+                    var response = await _httpClient.PostAsync(_uri, content);
+                    response.EnsureSuccessStatusCode();
+
+                    byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
+
+                    var (_, parsedMessage) = MessageParser.DeserializeMessage(_encryptionKey, responseBytes);
+
+                    if (parsedMessage is CheckInMessage checkInMsg)
+                    {
+                        _messengerId = checkInMsg.MessengerId;
+                        Console.WriteLine($"[+] Connected to server with Messenger ID: {_messengerId}");
+
+                        await PollServerAsync(); // Enter main loop
+                        return; // Exit reconnect loop on success
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException(
+                            $"Expected a CheckInMessage, but got {parsedMessage.GetType().Name}"
+                        );
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    throw new InvalidOperationException(
-                        $"Expected a CheckInMessage, but got {parsedMessage.GetType().Name}"
-                    );
+                    Console.WriteLine($"[!] Connection attempt failed: {ex.Message}");
+                    elapsedSeconds += retryDelaySeconds;
+                    if (elapsedSeconds >= maxTotalWaitSeconds)
+                    {
+                        Console.WriteLine("[-] Reconnect timeout after 30 minutes. Giving up.");
+                        break;
+                    }
+
+                    Console.WriteLine("[*] Retrying connection in 15 seconds...");
+                    await Task.Delay(retryDelaySeconds * 1000);
                 }
-                await PollServerAsync();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error connecting to server: {ex}");
-                throw;
             }
         }
+
 
         private async Task PollServerAsync()
         {

@@ -38,21 +38,68 @@ namespace MessengerClient
 
         public override async Task ConnectAsync()
         {
-            try
-            {
-                Console.WriteLine("Connecting to WebSocket server...");
-                await _webSocket.ConnectAsync(_uri, CancellationToken.None);
-                Console.WriteLine("Connected!");
+            int retrySeconds = 15;
+            int maxTimeoutSeconds = 1800;
+            int elapsed = 0;
 
-                var receivingTask = ReceiveMessagesAsync();
-                var sendingTask = SendMessagesAsync(_cancellationTokenSource.Token);
-                await Task.WhenAll(receivingTask, sendingTask);
-            }
-            catch (Exception ex)
+            while (elapsed < maxTimeoutSeconds)
             {
-                Console.WriteLine($"Error connecting to WebSocket server: {ex.Message}");
+                try
+                {
+                    _webSocket.Dispose();
+                    _webSocket = new ClientWebSocket();
+                    if (_proxy != null)
+                        _webSocket.Options.Proxy = _proxy;
+
+                    Console.WriteLine("Connecting to WebSocket server...");
+                    await _webSocket.ConnectAsync(_uri, CancellationToken.None);
+                    Console.WriteLine("Connected!");
+
+                    var checkIn = new CheckInMessage("");
+                    var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, new List<object> { checkIn }));
+                    await _webSocket.SendAsync(content, WebSocketMessageType.Binary, true, CancellationToken.None);
+
+                    var buffer = new byte[4096];
+                    var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                        throw new WebSocketException("Server closed during check-in");
+                    byte[] messageData = new byte[result.Count];
+                    Array.Copy(buffer, messageData, result.Count);
+
+                    var responseMessages = DeserializeMessages(_encryptionKey, messageData);
+
+                    if (responseMessages[0] is CheckInMessage responseCheckIn)
+                    {
+                        _messengerId = responseCheckIn.MessengerId;
+                        Console.WriteLine($"[*] Messenger ID received: {_messengerId}");
+                    }
+                    else
+                    {
+                        throw new Exception("Expected CheckInMessage from server");
+                    }
+
+                    _cancellationTokenSource = new CancellationTokenSource();
+                    var receivingTask = ReceiveMessagesAsync();
+                    var sendingTask = SendMessagesAsync(_cancellationTokenSource.Token);
+
+                    await Task.WhenAll(receivingTask, sendingTask);
+                    break; 
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[!] WebSocket connection failed: {ex.Message}");
+                    elapsed += retrySeconds;
+                    await Task.Delay(retrySeconds * 1000);
+                    Console.WriteLine("[*] Retrying connection...");
+                }
+            }
+
+            if (elapsed >= maxTimeoutSeconds)
+            {
+                Console.WriteLine("[-] Reconnect timeout after 30 minutes. Giving up.");
             }
         }
+
 
         private async Task ReceiveMessagesAsync()
         {
