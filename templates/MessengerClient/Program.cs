@@ -22,9 +22,6 @@ namespace MessengerClient
             {% endfor %}
         };
 
-        private const string HTTP_ROUTE = "?EIO=4&transport=polling";
-        private const string WS_ROUTE = "?EIO=4&transport=websocket";
-
         public static async Task Main(string[] args)
         {
             ServicePointManager.ServerCertificateValidationCallback =
@@ -57,9 +54,9 @@ namespace MessengerClient
             {
                 bool success = false;
                 if (scheme.Contains("http"))
-                    success = await TryHttp($"{scheme}://{uri}/{HTTP_ROUTE}", encryptionKey, proxy);
+                    success = await TryHttp($"{scheme}://{uri}", encryptionKey, proxy);
                 else if (scheme.Contains("ws"))
-                    success = await TryWs($"{scheme}://{uri}/{WS_ROUTE}", encryptionKey, proxy);
+                    success = await TryWs($"{scheme}://{uri}", encryptionKey, proxy);
 
                 if (success)
                     return;
