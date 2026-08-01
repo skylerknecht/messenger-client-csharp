@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using System.Text;
 using System.Security.Cryptography;
@@ -71,29 +71,17 @@ public class SendDataMessage
 // ----------------------------------------------------------------------
 public static class MessageParser
 {
-    /// <summary>
-    /// Read the first 4 bytes of <paramref name="data"/> as a big-endian uint32.
-    /// Returns (uintValue, leftoverBytes).
-    /// </summary>
     public static (uint Value, byte[] Remainder) ReadUInt32(byte[] data)
     {
         if (data.Length < 4)
             throw new ArgumentException("Not enough bytes to read a 32-bit value.");
 
-        // Big-endian decode into a uint
         uint value = (uint)((data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]);
         byte[] remainder = data.Skip(4).ToArray();
 
         return (value, remainder);
     }
 
-    /// <summary>
-    /// Reads a length-prefixed UTF-8 string:
-    ///  1) read a uint32 length
-    ///  2) read 'length' bytes
-    ///  3) decode UTF-8
-    /// Returns (stringValue, leftoverBytes).
-    /// </summary>
     public static (string Value, byte[] Remainder) ReadString(byte[] data)
     {
         var (length, remainder) = ReadUInt32(data);
@@ -106,25 +94,18 @@ public static class MessageParser
         return (s, leftover);
     }
 
-    /// <summary>
-    /// Parses the payload of a 0x04 'CheckIn' message (no decryption).
-    /// </summary>
     public static CheckInMessage ParseCheckIn(byte[] value)
     {
         var (messengerId, _) = ReadString(value);
         return new CheckInMessage(messengerId);
     }
 
-    /// <summary>
-    /// Parses the payload of a 0x01 'InitiateForwarderClientReq' message.
-    /// </summary>
     public static InitiateForwarderClientReq ParseInitiateForwarderClientReq(byte[] value)
     {
         var (forwarderClientId, remainder) = ReadString(value);
         var (ipAddress, remainder2) = ReadString(remainder);
         var (port, remainder3) = ReadUInt32(remainder2);
 
-        // cast uint -> int
         return new InitiateForwarderClientReq(
             forwarderClientId,
             ipAddress,
@@ -132,9 +113,6 @@ public static class MessageParser
         );
     }
 
-    /// <summary>
-    /// Parses the payload of a 0x02 'InitiateForwarderClientRep' message.
-    /// </summary>
     public static InitiateForwarderClientRep ParseInitiateForwarderClientRep(byte[] value)
     {
         var (forwarderClientId, remainder) = ReadString(value);
@@ -143,7 +121,6 @@ public static class MessageParser
         var (addressType, remainder4) = ReadUInt32(remainder3);
         var (reason, remainder5) = ReadUInt32(remainder4);
 
-        // cast all uint -> int
         return new InitiateForwarderClientRep(
             forwarderClientId,
             bindAddress,
@@ -153,9 +130,6 @@ public static class MessageParser
         );
     }
 
-    /// <summary>
-    /// Parses the payload of a 0x03 'SendDataMessage'.
-    /// </summary>
     public static SendDataMessage ParseSendData(byte[] value)
     {
         var (forwarderClientId, remainder) = ReadString(value);
@@ -168,33 +142,23 @@ public static class MessageParser
         );
     }
 
-    /// <summary>
-    /// High-level parse entrypoint:
-    ///   1) read the message_type (uint32)
-    ///   2) read the message_length (uint32)
-    ///   3) slice out the encrypted payload
-    ///   4) decrypt or parse plaintext
-    /// Returns (leftoverBytes, parsedMessage).
-    /// </summary>
     public static (byte[] leftover, object parsedMessage) DeserializeMessage(
         byte[] encryptionKey,
         byte[] rawData)
     {
-        // 1) Read the message type
         var (messageType, dataAfterType) = ReadUInt32(rawData);
-
-        // 2) Read the total message length
         var (messageLength, dataAfterLength) = ReadUInt32(dataAfterType);
 
-        // 3) Extract the (messageLength - 8) payload bytes
-        int payloadLen = (int)messageLength - 8;
+        if (messageLength < 8)
+            throw new ArgumentException("Invalid message: length field too small.");
+
+        int payloadLen = (int)(messageLength - 8);
         if (dataAfterLength.Length < payloadLen)
             throw new ArgumentException("Not enough bytes in data for the payload.");
 
         byte[] payload = dataAfterLength.Take(payloadLen).ToArray();
         byte[] leftover = dataAfterLength.Skip(payloadLen).ToArray();
 
-        // 4) Decrypt or parse plaintext, depending on message type
         object parsedMsg;
         switch (messageType)
         {
@@ -218,7 +182,6 @@ public static class MessageParser
                 }
             case 0x04:
                 {
-                    // According to the Python version, we do NOT decrypt for 0x04
                     parsedMsg = ParseCheckIn(payload);
                     break;
                 }
@@ -236,10 +199,6 @@ public static class MessageParser
 // ----------------------------------------------------------------------
 public static class MessageBuilder
 {
-    /// <summary>
-    /// Given a message object (one of our 4 types), build the fully formed
-    /// byte array (header + possibly encrypted payload).
-    /// </summary>
     public static byte[] SerializeMessage(byte[] encryptionKey, object msg)
     {
         byte[] payload;
@@ -286,7 +245,6 @@ public static class MessageBuilder
 
             case CheckInMessage cim:
                 messageType = 0x04;
-                // The Python code does not encrypt CheckInMessage
                 payload = BuildCheckInMessage(cim.MessengerId);
                 break;
 
@@ -297,26 +255,17 @@ public static class MessageBuilder
         return BuildMessage(messageType, payload);
     }
 
-    /// <summary>
-    /// Packs [message_type, total_length, payload] together in big-endian format.
-    /// </summary>
     public static byte[] BuildMessage(uint messageType, byte[] payload)
     {
-        // total_length = 8 (header) + payload length
         uint messageLength = (uint)(8 + payload.Length);
 
-        // Build the 8-byte header (all big-endian)
         byte[] header = new byte[8];
-        WriteUInt32(header, 0, messageType);    // message_type
-        WriteUInt32(header, 4, messageLength);  // total_length
+        WriteUInt32(header, 0, messageType);
+        WriteUInt32(header, 4, messageLength);
 
-        // Concatenate header + payload
         return Combine(header, payload);
     }
 
-    /// <summary>
-    /// Encodes a string with a 4-byte length prefix (big-endian), plus UTF-8 data.
-    /// </summary>
     public static byte[] BuildString(string value)
     {
         byte[] encoded = Encoding.UTF8.GetBytes(value);
@@ -339,7 +288,6 @@ public static class MessageBuilder
         var part1 = BuildString(forwarderClientId);
         var part2 = BuildString(ipAddress);
 
-        // We'll still write it as a uint on the wire
         byte[] part3 = new byte[4];
         WriteUInt32(part3, 0, (uint)port);
 
@@ -356,7 +304,6 @@ public static class MessageBuilder
         var part1 = BuildString(forwarderClientId);
         var part2 = BuildString(bindAddress);
 
-        // Next 3 fields => 3*4 bytes => 12 bytes
         byte[] part3 = new byte[12];
         WriteUInt32(part3, 0, (uint)bindPort);
         WriteUInt32(part3, 4, (uint)addressType);
@@ -376,9 +323,6 @@ public static class MessageBuilder
         return Combine(part1, part2);
     }
 
-    // ----------------------------------------------------------------------
-    // Helper: Write a uint32 to a byte array in big-endian
-    // ----------------------------------------------------------------------
     public static void WriteUInt32(byte[] buffer, int offset, uint value)
     {
         buffer[offset] = (byte)((value >> 24) & 0xFF);
@@ -387,9 +331,6 @@ public static class MessageBuilder
         buffer[offset + 3] = (byte)(value & 0xFF);
     }
 
-    // ----------------------------------------------------------------------
-    // Helper: Concatenate multiple byte arrays
-    // ----------------------------------------------------------------------
     public static byte[] Combine(params byte[][] arrays)
     {
         int totalLength = 0;

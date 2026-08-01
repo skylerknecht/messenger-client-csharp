@@ -3,9 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
-using System.Net.Sockets;
 using System.Net.WebSockets;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -15,41 +13,45 @@ namespace MessengerClient
     {
         private readonly Uri _uri;
         private readonly byte[] _encryptionKey;
+        private readonly string _userAgent;
+        private readonly double _retryDuration;
+        private readonly int _retryAttempts;
         private readonly IWebProxy _proxy;
         private ClientWebSocket _webSocket;
         private readonly ConcurrentQueue<object> _downstreamMessages;
         private string _messengerId;
-        private CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+        private CancellationTokenSource _cancellationTokenSource;
 
-        public WebSocketMessengerClient(string uri, byte[] encryptionKey, IWebProxy proxy = null)
+        public WebSocketMessengerClient(string uri, byte[] encryptionKey, string userAgent, double retryDuration, int retryAttempts, IWebProxy proxy = null)
         {
             _uri = new Uri(uri);
             _encryptionKey = encryptionKey;
-            _proxy = proxy; 
+            _userAgent = userAgent;
+            _retryDuration = retryDuration;
+            _retryAttempts = retryAttempts;
+            _proxy = proxy;
             _webSocket = new ClientWebSocket();
             _downstreamMessages = new ConcurrentQueue<object>();
             _messengerId = String.Empty;
-
-            if (_proxy != null)
-            {
-                _webSocket.Options.Proxy = _proxy;
-            }
         }
 
         public override async Task ConnectAsync()
         {
-            int retrySeconds = 15;
-            int maxTimeoutSeconds = 1800;
-            int elapsed = 0;
+            int retryDelay = (int)((_retryDuration / _retryAttempts) * 1000);
+            int consecutiveFailures = 0;
 
-            while (elapsed < maxTimeoutSeconds)
+            while (consecutiveFailures < _retryAttempts)
             {
                 try
                 {
-                    _webSocket.Dispose();
+                    _cancellationTokenSource?.Cancel();
+                    _cancellationTokenSource?.Dispose();
+
+                    _webSocket?.Dispose();
                     _webSocket = new ClientWebSocket();
                     if (_proxy != null)
                         _webSocket.Options.Proxy = _proxy;
+                    _webSocket.Options.SetRequestHeader("User-Agent", _userAgent);
 
                     Console.WriteLine("Connecting to WebSocket server...");
                     await _webSocket.ConnectAsync(_uri, CancellationToken.None);
@@ -59,12 +61,19 @@ namespace MessengerClient
                     var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, new List<object> { checkIn }));
                     await _webSocket.SendAsync(content, WebSocketMessageType.Binary, true, CancellationToken.None);
 
+                    var ms = new MemoryStream();
                     var buffer = new byte[4096];
-                    var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-                    if (result.MessageType == WebSocketMessageType.Close)
-                        throw new WebSocketException("Server closed during check-in");
-                    byte[] messageData = new byte[result.Count];
-                    Array.Copy(buffer, messageData, result.Count);
+                    WebSocketReceiveResult result;
+                    do
+                    {
+                        result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+                        if (result.MessageType == WebSocketMessageType.Close)
+                            throw new WebSocketException("Server closed during check-in");
+                        ms.Write(buffer, 0, result.Count);
+                    } while (!result.EndOfMessage);
+
+                    byte[] messageData = ms.ToArray();
+                    ms.Dispose();
 
                     var responseMessages = DeserializeMessages(_encryptionKey, messageData);
 
@@ -83,28 +92,28 @@ namespace MessengerClient
                     var sendingTask = SendMessagesAsync(_cancellationTokenSource.Token);
 
                     await Task.WhenAll(receivingTask, sendingTask);
-                    break; 
+                    consecutiveFailures = 0;
                 }
                 catch (Exception ex)
                 {
+                    consecutiveFailures++;
                     Console.WriteLine($"[!] WebSocket connection failed: {ex.Message}");
-                    elapsed += retrySeconds;
-                    await Task.Delay(retrySeconds * 1000);
-                    Console.WriteLine("[*] Retrying connection...");
+                    if (consecutiveFailures < _retryAttempts)
+                    {
+                        Console.WriteLine("[*] Retrying connection...");
+                        await Task.Delay(retryDelay);
+                    }
                 }
             }
 
-            if (elapsed >= maxTimeoutSeconds)
-            {
-                Console.WriteLine("[-] Reconnect timeout after 30 minutes. Giving up.");
-            }
+            Console.WriteLine($"[-] Reconnect failed after {_retryAttempts} attempts. Giving up.");
         }
 
 
         private async Task ReceiveMessagesAsync()
         {
             var buffer = new byte[4096];
-            var messageBuffer = new MemoryStream(); 
+            var messageBuffer = new MemoryStream();
 
             while (_webSocket.State == WebSocketState.Open)
             {
@@ -123,7 +132,7 @@ namespace MessengerClient
                     if (result.EndOfMessage)
                     {
                         byte[] messageData = messageBuffer.ToArray();
-                        messageBuffer.SetLength(0); 
+                        messageBuffer.SetLength(0);
 
                         try
                         {
@@ -134,7 +143,7 @@ namespace MessengerClient
                                 _ = Task.Run(async () =>
                                 {
                                     await HandleMessageAsync(message);
-                                });                                
+                                });
                             }
                         }
                         catch (Exception ex)
@@ -146,6 +155,7 @@ namespace MessengerClient
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Error receiving message: {ex.Message}");
+                    break;
                 }
             }
         }
@@ -163,7 +173,12 @@ namespace MessengerClient
                     break;
 
                 case SendDataMessage sendDataMessage:
-                    if (ForwarderClients.TryGetValue(sendDataMessage.ForwarderClientId, out var client))
+                    if (sendDataMessage.Data.Length == 0)
+                    {
+                        if (ForwarderClients.TryRemove(sendDataMessage.ForwarderClientId, out var closedClient))
+                            closedClient.Close();
+                    }
+                    else if (ForwarderClients.TryGetValue(sendDataMessage.ForwarderClientId, out var client))
                     {
                         await client.GetStream().WriteAsync(sendDataMessage.Data, 0, sendDataMessage.Data.Length);
                     }
@@ -179,18 +194,19 @@ namespace MessengerClient
             }
         }
 
-        public override async Task SendDownstreamMessageAsync(object message)
+        public override Task SendDownstreamMessageAsync(object message)
         {
             _downstreamMessages.Enqueue(message);
+            return Task.CompletedTask;
         }
 
         private async Task SendMessagesAsync(CancellationToken token)
         {
-            while (!token.IsCancellationRequested)
+            while (!token.IsCancellationRequested && _webSocket.State == WebSocketState.Open)
             {
                 if (_downstreamMessages.IsEmpty)
                 {
-                    await Task.Delay(10, token); // Wait briefly before rechecking
+                    await Task.Delay(10, token);
                     continue;
                 }
 

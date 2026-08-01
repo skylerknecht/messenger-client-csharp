@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Linq;
 using System.Text;
 using System.Security.Cryptography;
@@ -21,7 +21,8 @@ namespace MessengerClient
 
         public static byte[] Encrypt(byte[] key, ArraySegment<byte> plainText)
         {
-            byte[] plainTextBytes = plainText.Array;
+            byte[] plainTextBytes = new byte[plainText.Count];
+            Array.Copy(plainText.Array, plainText.Offset, plainTextBytes, 0, plainText.Count);
             return Encrypt(key, plainTextBytes);
         }
 

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
@@ -12,13 +12,17 @@ namespace MessengerClient
         private readonly string _uri;
         private readonly HttpClient _httpClient;
         private readonly byte[] _encryptionKey;
+        private readonly double _retryDuration;
+        private readonly int _retryAttempts;
         private readonly ConcurrentQueue<object> _downstreamMessages;
         private string _messengerId;
 
-        public HTTPMessengerClient(string uri, byte[] encryptionKey, IWebProxy proxy = null)
+        public HTTPMessengerClient(string uri, byte[] encryptionKey, string userAgent, double retryDuration, int retryAttempts, IWebProxy proxy = null)
         {
             _uri = uri;
             _encryptionKey = encryptionKey;
+            _retryDuration = retryDuration;
+            _retryAttempts = retryAttempts;
 
             var handler = new HttpClientHandler();
             if (proxy != null)
@@ -28,16 +32,16 @@ namespace MessengerClient
             }
 
             _httpClient = new HttpClient(handler);
+            _httpClient.DefaultRequestHeaders.Add("User-Agent", userAgent);
             _downstreamMessages = new ConcurrentQueue<object>();
         }
 
         public override async Task ConnectAsync()
         {
-            int retryDelaySeconds = 15;
-            int maxTotalWaitSeconds = 1800;
-            int elapsedSeconds = 0;
+            int retryDelay = (int)((_retryDuration / _retryAttempts) * 1000);
+            int consecutiveFailures = 0;
 
-            while (elapsedSeconds < maxTotalWaitSeconds)
+            while (consecutiveFailures < _retryAttempts)
             {
                 try
                 {
@@ -57,32 +61,30 @@ namespace MessengerClient
                     if (parsedMessage is CheckInMessage checkInMsg)
                     {
                         _messengerId = checkInMsg.MessengerId;
-                        Console.WriteLine($"[+] Connected to server with Messenger ID: {_messengerId}");
-
-                        await PollServerAsync(); // Enter main loop
-                        return; // Exit reconnect loop on success
+                        Console.WriteLine($"[+] Connected with Messenger ID: {_messengerId}");
+                        consecutiveFailures = 0;
+                        await PollServerAsync();
                     }
                     else
                     {
                         throw new InvalidOperationException(
-                            $"Expected a CheckInMessage, but got {parsedMessage.GetType().Name}"
+                            $"Expected CheckInMessage, got {parsedMessage.GetType().Name}"
                         );
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[!] Connection attempt failed: {ex.Message}");
-                    elapsedSeconds += retryDelaySeconds;
-                    if (elapsedSeconds >= maxTotalWaitSeconds)
+                    consecutiveFailures++;
+                    Console.WriteLine($"[!] Connection failed: {ex.Message}");
+                    if (consecutiveFailures < _retryAttempts)
                     {
-                        Console.WriteLine("[-] Reconnect timeout after 30 minutes. Giving up.");
-                        break;
+                        Console.WriteLine("[*] Retrying connection...");
+                        await Task.Delay(retryDelay);
                     }
-
-                    Console.WriteLine("[*] Retrying connection in 15 seconds...");
-                    await Task.Delay(retryDelaySeconds * 1000);
                 }
             }
+
+            Console.WriteLine($"[-] Reconnect failed after {_retryAttempts} attempts. Giving up.");
         }
 
 
@@ -90,56 +92,39 @@ namespace MessengerClient
         {
             while (true)
             {
-                try
+                var downstreamMessages = new List<object>();
+
+                CheckInMessage checkInMessage = new CheckInMessage(_messengerId);
+                downstreamMessages.Add(checkInMessage);
+
+                while (_downstreamMessages.TryDequeue(out var message))
                 {
-                    var downstreamMessages = new List<object>();
-
-                    CheckInMessage checkInMessage = new CheckInMessage(_messengerId);
-                    downstreamMessages.Add(checkInMessage);
-
-                    while (_downstreamMessages.TryDequeue(out var message))
-                    {
-                        downstreamMessages.Add(message);
-                    }
-
-                    HttpContent content = new ByteArrayContent(SerializeMessages(_encryptionKey, downstreamMessages));
-                    content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-                    var response = await _httpClient.PostAsync(_uri, content);
-
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        Console.WriteLine($"Failed to poll server. HTTP {response.StatusCode}");
-                        break;
-                    }
-
-                    var responseData = await response.Content.ReadAsByteArrayAsync();
-                    var messages = DeserializeMessages(_encryptionKey, responseData);
-
-                    foreach (var message in messages)
-                    {
-                        _ = Task.Run(() => HandleMessageAsync(message));
-                    }
-
-                    await Task.Delay(1000);
+                    downstreamMessages.Add(message);
                 }
-                catch (Exception ex)
+
+                HttpContent content = new ByteArrayContent(SerializeMessages(_encryptionKey, downstreamMessages));
+                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+                var response = await _httpClient.PostAsync(_uri, content);
+
+                if (!response.IsSuccessStatusCode)
+                    throw new HttpRequestException($"Poll failed: HTTP {response.StatusCode}");
+
+                var responseData = await response.Content.ReadAsByteArrayAsync();
+                var messages = DeserializeMessages(_encryptionKey, responseData);
+
+                foreach (var msg in messages)
                 {
-                    Console.WriteLine($"Error polling server: {ex.Message}");
-                    break;
+                    _ = Task.Run(() => HandleMessageAsync(msg));
                 }
+
+                await Task.Delay(1000);
             }
         }
 
-        public override async Task SendDownstreamMessageAsync(object message)
+        public override Task SendDownstreamMessageAsync(object message)
         {
-            try
-            {
-                _downstreamMessages.Enqueue(message);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error enqueuing downstream message: {ex.Message}");
-            }
+            _downstreamMessages.Enqueue(message);
+            return Task.CompletedTask;
         }
 
         public override async Task HandleMessageAsync(object message)
@@ -155,7 +140,12 @@ namespace MessengerClient
                     break;
 
                 case SendDataMessage sendDataMessage:
-                    if (ForwarderClients.TryGetValue(sendDataMessage.ForwarderClientId, out var client))
+                    if (sendDataMessage.Data.Length == 0)
+                    {
+                        if (ForwarderClients.TryRemove(sendDataMessage.ForwarderClientId, out var closedClient))
+                            closedClient.Close();
+                    }
+                    else if (ForwarderClients.TryGetValue(sendDataMessage.ForwarderClientId, out var client))
                     {
                         await client.GetStream().WriteAsync(sendDataMessage.Data, 0, sendDataMessage.Data.Length);
                     }

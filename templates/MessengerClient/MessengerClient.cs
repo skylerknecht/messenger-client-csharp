@@ -1,10 +1,9 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
-using System.Net.Http;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 
@@ -57,12 +56,13 @@ namespace MessengerClient
 
         public async Task HandleInitiateForwarderClientReqAsync(InitiateForwarderClientReq message)
         {
+            Socket socket = null;
             try
             {
                 var addresses = await Dns.GetHostAddressesAsync(message.IpAddress);
                 var target = addresses.First(a => a.AddressFamily == AddressFamily.InterNetwork || a.AddressFamily == AddressFamily.InterNetworkV6);
 
-                var socket = new Socket(target.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                socket = new Socket(target.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
 
                 if (socket.AddressFamily == AddressFamily.InterNetworkV6)
                     socket.DualMode = true;
@@ -70,6 +70,7 @@ namespace MessengerClient
                 await socket.ConnectAsync(target, message.Port);
 
                 var client = new TcpClient { Client = socket };
+                socket = null;
                 ForwarderClients[message.ForwarderClientId] = client;
 
                 var localEndPoint = (IPEndPoint)client.Client.LocalEndPoint;
@@ -82,7 +83,7 @@ namespace MessengerClient
                     bindAddress,
                     bindPort,
                     atype,
-                    0 // success
+                    0
                 );
 
                 await SendDownstreamMessageAsync(repObj);
@@ -115,9 +116,9 @@ namespace MessengerClient
 
                 var repObj = new InitiateForwarderClientRep(
                     message.ForwarderClientId,
-                    "0.0.0.0", // SOCKS-compliant placeholder
+                    "0.0.0.0",
                     0,
-                    1,         // valid atype = IPv4
+                    1,
                     reason
                 );
 
@@ -148,6 +149,10 @@ namespace MessengerClient
 
                 await SendDownstreamMessageAsync(repObj);
             }
+            finally
+            {
+                socket?.Dispose();
+            }
         }
 
         protected async Task StreamAsync(string forwarderClientId)
@@ -169,7 +174,6 @@ namespace MessengerClient
                     Array.Copy(buffer, 0, dataToSend, 0, bytesRead);
 
                     var sdmObj = new SendDataMessage(forwarderClientId, dataToSend);
-
                     await SendDownstreamMessageAsync(sdmObj);
                 }
             }
@@ -179,9 +183,12 @@ namespace MessengerClient
             finally
             {
                 stream?.Dispose();
-                ForwarderClients.TryRemove(forwarderClientId, out _);
-                var closeObj = new SendDataMessage(forwarderClientId, Array.Empty<byte>());
-                await SendDownstreamMessageAsync(closeObj);
+                if (ForwarderClients.TryRemove(forwarderClientId, out var removed))
+                {
+                    removed.Close();
+                    var closeObj = new SendDataMessage(forwarderClientId, Array.Empty<byte>());
+                    await SendDownstreamMessageAsync(closeObj);
+                }
             }
         }
     }

@@ -1,7 +1,6 @@
-﻿using System;
+using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace MessengerClient
@@ -25,9 +24,6 @@ namespace MessengerClient
             Name = "Remote Port Forwarder";
         }
 
-        /// <summary>
-        /// Starts the port forwarder.
-        /// </summary>
         public async Task StartAsync()
         {
             try
@@ -39,7 +35,7 @@ namespace MessengerClient
                 while (true)
                 {
                     var client = await _tcpListener.AcceptTcpClientAsync();
-                    _ = HandleClientAsync(client); // Fire-and-forget to handle multiple clients concurrently.
+                    _ = HandleClientAsync(client);
                 }
             }
             catch (SocketException ex)
@@ -48,10 +44,6 @@ namespace MessengerClient
             }
         }
 
-        /// <summary>
-        /// Handles an incoming client connection.
-        /// </summary>
-        /// <param name="client">The connected TCP client.</param>
         private async Task HandleClientAsync(TcpClient client)
         {
             var clientId = Guid.NewGuid().ToString();
@@ -62,18 +54,10 @@ namespace MessengerClient
                 _destinationPort
             );
 
-            // Send the downstream message to the messenger.
-            await _messenger.SendDownstreamMessageAsync(downstreamMessage);
-
-            // Register the forwarder client.
             _messenger.ForwarderClients[clientId] = client;
+            await _messenger.SendDownstreamMessageAsync(downstreamMessage);
         }
 
-        /// <summary>
-        /// Parses the configuration string to extract the host and port information.
-        /// </summary>
-        /// <param name="config">The configuration string.</param>
-        /// <returns>A tuple containing the parsed host and port values.</returns>
         private (string listeningHost, int listeningPort, string destinationHost, int destinationPort) ParseConfig(string config)
         {
             var parts = config.Split(':');
