@@ -47,30 +47,33 @@ namespace MessengerClient
                 {
                     Console.WriteLine($"Connecting to HTTP server at {_uri}");
 
-                    var downstreamMessage = MessageBuilder.SerializeMessage(_encryptionKey, new CheckInMessage(""));
+                    var downstreamMessage = MessageBuilder.SerializeMessage(_encryptionKey, new CheckInMessage(_messengerId));
                     HttpContent content = new ByteArrayContent(downstreamMessage);
                     content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
 
                     var response = await _httpClient.PostAsync(_uri, content);
                     response.EnsureSuccessStatusCode();
 
-                    byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
-
-                    var (_, parsedMessage) = MessageParser.DeserializeMessage(_encryptionKey, responseBytes);
-
-                    if (parsedMessage is CheckInMessage checkInMsg)
+                    if (string.IsNullOrEmpty(_messengerId))
                     {
-                        _messengerId = checkInMsg.MessengerId;
-                        Console.WriteLine($"[+] Connected with Messenger ID: {_messengerId}");
-                        consecutiveFailures = 0;
-                        await PollServerAsync();
+                        byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
+                        var (_, parsedMessage) = MessageParser.DeserializeMessage(_encryptionKey, responseBytes);
+
+                        if (parsedMessage is CheckInMessage checkInMsg)
+                        {
+                            _messengerId = checkInMsg.MessengerId;
+                            Console.WriteLine($"[+] Connected with Messenger ID: {_messengerId}");
+                        }
+                        else
+                        {
+                            throw new InvalidOperationException(
+                                $"Expected CheckInMessage, got {parsedMessage.GetType().Name}"
+                            );
+                        }
                     }
-                    else
-                    {
-                        throw new InvalidOperationException(
-                            $"Expected CheckInMessage, got {parsedMessage.GetType().Name}"
-                        );
-                    }
+
+                    consecutiveFailures = 0;
+                    await PollServerAsync();
                 }
                 catch (Exception ex)
                 {
@@ -136,6 +139,14 @@ namespace MessengerClient
                     break;
 
                 case InitiateForwarderClientRep repMessage:
+                    if (!ForwarderClients.TryGetValue(repMessage.ForwarderClientId, out var repClient))
+                        break;
+                    if (repMessage.Reason != 0)
+                    {
+                        if (ForwarderClients.TryRemove(repMessage.ForwarderClientId, out var denied))
+                            denied.Close();
+                        break;
+                    }
                     await StreamAsync(repMessage.ForwarderClientId);
                     break;
 

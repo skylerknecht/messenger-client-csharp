@@ -24,7 +24,7 @@ namespace MessengerClient
             var messages = new List<object>();
             byte[] leftover = rawData;
 
-            while (leftover.Length > 0)
+            while (leftover.Length >= 8)
             {
                 var (newLeftover, parsedMessage) = MessageParser.DeserializeMessage(encryptionKey, leftover);
                 messages.Add(parsedMessage);

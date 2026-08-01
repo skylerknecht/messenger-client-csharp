@@ -18,7 +18,7 @@ The Client is a .NET Framework 4.7.2 Messenger Client targeting Windows environm
 
 | Capability                    | Support Status                                                                                         |
 |-------------------------------|--------------------------------------------------------------------------------------------------------|
-| Compilation                   | Outputs a project directory requiring compilation with `msbuild` (Windows) or Mono's `msbuild` (Linux). |
+| Compilation                   | Outputs a project directory requiring compilation with `dotnet build` (.NET SDK). |
 
 ## Quick Start
 
@@ -26,9 +26,9 @@ The Client is a .NET Framework 4.7.2 Messenger Client targeting Windows environm
 operator~# python builder.py --encryption-key test
 [+] Wrote C# client to 'MessengerClient'
 
-operator~# cd MessengerClient
-operator~# msbuild MessengerClient.sln /p:Configuration=Release
-operator~# bin\Release\MessengerClient.exe
+operator~# cd MessengerClient/MessengerClient
+operator~# dotnet build -c Release
+operator~# bin\Release\net472\MessengerClient.exe
 ```
 
 ## Usage
@@ -36,8 +36,9 @@ operator~# bin\Release\MessengerClient.exe
 To build the client, execute `builder.py` or `messenger-builder` from the [Messenger Repository](https://github.com/skylerknecht/messenger).
 
 Both scripts accept the same options and will generate a C# Messenger Client project directory. If provided options, the builder scripts
-will hard-code the options into the source files. The output is a complete .NET Framework 4.7.2 project that can be compiled with
-`msbuild` (Windows) or Mono's `msbuild` (Linux). Those options and their definitions are shown below.
+will hard-code the options into the source files. Once built, the operator can specify command-line arguments that will override
+the hardcoded options. The output is a .NET Framework 4.7.2 project that can be compiled with
+`dotnet build` on any platform. Those options and their definitions are shown below.
 
 ## Client Options
 

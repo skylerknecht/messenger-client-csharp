@@ -57,34 +57,37 @@ namespace MessengerClient
                     await _webSocket.ConnectAsync(_uri, CancellationToken.None);
                     Console.WriteLine("Connected!");
 
-                    var checkIn = new CheckInMessage("");
+                    var checkIn = new CheckInMessage(_messengerId);
                     var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, new List<object> { checkIn }));
                     await _webSocket.SendAsync(content, WebSocketMessageType.Binary, true, CancellationToken.None);
 
-                    var ms = new MemoryStream();
-                    var buffer = new byte[4096];
-                    WebSocketReceiveResult result;
-                    do
+                    if (string.IsNullOrEmpty(_messengerId))
                     {
-                        result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-                        if (result.MessageType == WebSocketMessageType.Close)
-                            throw new WebSocketException("Server closed during check-in");
-                        ms.Write(buffer, 0, result.Count);
-                    } while (!result.EndOfMessage);
+                        var ms = new MemoryStream();
+                        var buffer = new byte[4096];
+                        WebSocketReceiveResult result;
+                        do
+                        {
+                            result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+                            if (result.MessageType == WebSocketMessageType.Close)
+                                throw new WebSocketException("Server closed during check-in");
+                            ms.Write(buffer, 0, result.Count);
+                        } while (!result.EndOfMessage);
 
-                    byte[] messageData = ms.ToArray();
-                    ms.Dispose();
+                        byte[] messageData = ms.ToArray();
+                        ms.Dispose();
 
-                    var responseMessages = DeserializeMessages(_encryptionKey, messageData);
+                        var responseMessages = DeserializeMessages(_encryptionKey, messageData);
 
-                    if (responseMessages[0] is CheckInMessage responseCheckIn)
-                    {
-                        _messengerId = responseCheckIn.MessengerId;
-                        Console.WriteLine($"[*] Messenger ID received: {_messengerId}");
-                    }
-                    else
-                    {
-                        throw new Exception("Expected CheckInMessage from server");
+                        if (responseMessages[0] is CheckInMessage responseCheckIn)
+                        {
+                            _messengerId = responseCheckIn.MessengerId;
+                            Console.WriteLine($"[*] Messenger ID received: {_messengerId}");
+                        }
+                        else
+                        {
+                            throw new Exception("Expected CheckInMessage from server");
+                        }
                     }
 
                     _cancellationTokenSource = new CancellationTokenSource();
@@ -169,6 +172,14 @@ namespace MessengerClient
                     break;
 
                 case InitiateForwarderClientRep repMessage:
+                    if (!ForwarderClients.TryGetValue(repMessage.ForwarderClientId, out var repClient))
+                        break;
+                    if (repMessage.Reason != 0)
+                    {
+                        if (ForwarderClients.TryRemove(repMessage.ForwarderClientId, out var denied))
+                            denied.Close();
+                        break;
+                    }
                     await StreamAsync(repMessage.ForwarderClientId);
                     break;
 

@@ -15,7 +15,7 @@ namespace MessengerClient
         {
             using (SHA256 sha256 = SHA256.Create())
             {
-                return sha256.ComputeHash(Encoding.ASCII.GetBytes(encryption_key));
+                return sha256.ComputeHash(Encoding.UTF8.GetBytes(encryption_key));
             }
         }
 
