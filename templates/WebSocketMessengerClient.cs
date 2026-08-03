@@ -51,8 +51,6 @@ namespace MessengerClient
                     _webSocket = new ClientWebSocket();
                     if (_proxy != null)
                         _webSocket.Options.Proxy = _proxy;
-                    _webSocket.Options.SetRequestHeader("User-Agent", _userAgent);
-
                     Console.WriteLine("Connecting to WebSocket server...");
                     await _webSocket.ConnectAsync(_uri, CancellationToken.None);
                     Console.WriteLine("Connected!");
