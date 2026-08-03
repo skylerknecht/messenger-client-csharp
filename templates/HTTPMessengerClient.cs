@@ -15,7 +15,7 @@ namespace MessengerClient
         private readonly double _retryDuration;
         private readonly int _retryAttempts;
         private readonly ConcurrentQueue<object> _downstreamMessages;
-        private string _messengerId;
+        private string _messengerId = string.Empty;
 
         public HTTPMessengerClient(string uri, byte[] encryptionKey, string userAgent, double retryDuration, int retryAttempts, IWebProxy proxy = null)
         {
