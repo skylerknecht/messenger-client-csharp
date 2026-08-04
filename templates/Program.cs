@@ -91,7 +91,7 @@ namespace MessengerClient
             if (!string.IsNullOrEmpty(proxyStr))
             {
                 proxy = CreateWebProxy(proxyStr);
-                Console.WriteLine($"Using proxy: {proxyStr}");
+                Console.WriteLine($"[*] Using proxy: {proxyStr}");
             }
 
             string uri = serverUrl.Trim('/');
@@ -120,14 +120,14 @@ namespace MessengerClient
                     return;
             }
 
-            Console.WriteLine("All connection attempts failed.");
+            Console.WriteLine("[!] All connection attempts failed.");
         }
 
         private static async Task<bool> TryHttp(string url, byte[] encryptionKey, string userAgent, double retryDuration, int retryAttempts, string[] remotePortForwards, IWebProxy proxy)
         {
             try
             {
-                Console.WriteLine($"[HTTP] Trying {url}");
+                Console.WriteLine("[*] Attempting to connect over HTTP");
                 var client = new HTTPMessengerClient(url, encryptionKey, userAgent, retryDuration, retryAttempts, proxy);
                 client.OnConnected = () => StartRemotePortForwards(client, remotePortForwards);
                 await client.ConnectAsync();
@@ -135,7 +135,7 @@ namespace MessengerClient
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[HTTP] Failed: {ex.Message}");
+                Console.WriteLine($"[!] Connection failed: {ex.Message}");
                 return false;
             }
         }
@@ -144,7 +144,7 @@ namespace MessengerClient
         {
             try
             {
-                Console.WriteLine($"[WebSocket] Trying {url}");
+                Console.WriteLine("[*] Attempting to connect over WS");
                 var client = new WebSocketMessengerClient(url, encryptionKey, userAgent, retryDuration, retryAttempts, proxy);
                 client.OnConnected = () => StartRemotePortForwards(client, remotePortForwards);
                 await client.ConnectAsync();
@@ -152,7 +152,7 @@ namespace MessengerClient
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[WebSocket] Failed: {ex.Message}");
+                Console.WriteLine($"[!] Connection failed: {ex.Message}");
                 return false;
             }
         }
@@ -165,11 +165,10 @@ namespace MessengerClient
                 {
                     var forwarder = new RemotePortForwarder(client, config);
                     _ = forwarder.StartAsync();
-                    Console.WriteLine($"Started RemotePortForwarder: {config}");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed RemotePortForwarder {config}: {ex.Message}");
+                    Console.WriteLine($"[!] Failed to start Remote Port Forwarder: {config}");
                 }
             }
         }

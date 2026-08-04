@@ -45,8 +45,6 @@ namespace MessengerClient
             {
                 try
                 {
-                    Console.WriteLine($"Connecting to HTTP server at {_uri}");
-
                     var downstreamMessage = MessageBuilder.SerializeMessage(_encryptionKey, new CheckInMessage(_messengerId));
                     HttpContent content = new ByteArrayContent(downstreamMessage);
                     content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
@@ -62,7 +60,7 @@ namespace MessengerClient
                         if (parsedMessage is CheckInMessage checkInMsg)
                         {
                             _messengerId = checkInMsg.MessengerId;
-                            Console.WriteLine($"[+] Connected with Messenger ID: {_messengerId}");
+                            Console.WriteLine($"[+] Connected to {_uri}");
                         }
                         else
                         {
@@ -167,7 +165,6 @@ namespace MessengerClient
                     break;
 
                 default:
-                    Console.WriteLine("Unknown message type received");
                     break;
             }
         }

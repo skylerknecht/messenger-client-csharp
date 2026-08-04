@@ -31,7 +31,7 @@ namespace MessengerClient
                 var addresses = Dns.GetHostAddresses(_listeningHost);
                 _tcpListener = new TcpListener(addresses[0], _listeningPort);
                 _tcpListener.Start();
-                Console.WriteLine($"{Name} {GetHashCode()} is listening on {_listeningHost}:{_listeningPort}");
+                Console.WriteLine($"[+] Remote Port Forwarder {GetHashCode()} is listening on {_listeningHost}:{_listeningPort}");
 
                 while (true)
                 {
@@ -41,7 +41,7 @@ namespace MessengerClient
             }
             catch (SocketException ex)
             {
-                Console.WriteLine($"{_listeningHost}:{_listeningPort} is already in use or encountered an error: {ex.Message}");
+                Console.WriteLine($"[!] {_listeningHost}:{_listeningPort} is already in use or encountered an error: {ex.Message}");
             }
         }
 

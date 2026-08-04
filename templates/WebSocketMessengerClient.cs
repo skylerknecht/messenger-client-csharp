@@ -51,9 +51,7 @@ namespace MessengerClient
                     _webSocket = new ClientWebSocket();
                     if (_proxy != null)
                         _webSocket.Options.Proxy = _proxy;
-                    Console.WriteLine("Connecting to WebSocket server...");
                     await _webSocket.ConnectAsync(_uri, CancellationToken.None);
-                    Console.WriteLine("Connected!");
 
                     var checkIn = new CheckInMessage(_messengerId);
                     var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, new List<object> { checkIn }));
@@ -80,7 +78,7 @@ namespace MessengerClient
                         if (responseMessages[0] is CheckInMessage responseCheckIn)
                         {
                             _messengerId = responseCheckIn.MessengerId;
-                            Console.WriteLine($"[*] Messenger ID received: {_messengerId}");
+                            Console.WriteLine($"[+] Connected to {_uri}");
                         }
                         else
                         {
@@ -100,7 +98,7 @@ namespace MessengerClient
                 catch (Exception ex)
                 {
                     consecutiveFailures++;
-                    Console.WriteLine($"[!] WebSocket connection failed: {ex.Message}");
+                    Console.WriteLine($"[!] Connection failed: {ex.Message}");
                     if (consecutiveFailures < _retryAttempts)
                     {
                         Console.WriteLine("[*] Retrying connection...");
@@ -126,7 +124,6 @@ namespace MessengerClient
 
                     if (result.MessageType == WebSocketMessageType.Close)
                     {
-                        Console.WriteLine("WebSocket connection closed.");
                         break;
                     }
 
@@ -151,13 +148,13 @@ namespace MessengerClient
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"Error parsing message: {ex.Message}");
+                            Console.WriteLine($"[!] Error parsing message: {ex.Message}");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Error receiving message: {ex.Message}");
+                    Console.WriteLine($"[!] Error receiving message: {ex.Message}");
                     break;
                 }
             }
@@ -200,7 +197,6 @@ namespace MessengerClient
                     break;
 
                 default:
-                    Console.WriteLine("Unknown message type received");
                     break;
             }
         }
@@ -238,7 +234,6 @@ namespace MessengerClient
             if (_webSocket.State == WebSocketState.Open)
             {
                 await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing connection", CancellationToken.None);
-                Console.WriteLine("WebSocket connection closed.");
             }
         }
     }
