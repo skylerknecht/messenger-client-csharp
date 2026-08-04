@@ -21,6 +21,17 @@ namespace MessengerClient
 
         public abstract Task HandleMessageAsync(object message);
 
+        private static readonly Random _random = new Random();
+        private const string _alphanumeric = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+        public static string AlphanumericIdentifier(int length = 10)
+        {
+            var chars = new char[length];
+            for (int i = 0; i < length; i++)
+                chars[i] = _alphanumeric[_random.Next(_alphanumeric.Length)];
+            return new string(chars);
+        }
+
         public static List<object> DeserializeMessages(byte[] encryptionKey, byte[] rawData)
         {
             var messages = new List<object>();
