@@ -129,7 +129,7 @@ namespace MessengerClient
             {
                 Console.WriteLine($"[HTTP] Trying {url}");
                 var client = new HTTPMessengerClient(url, encryptionKey, userAgent, retryDuration, retryAttempts, proxy);
-                StartRemotePortForwards(client, remotePortForwards);
+                client.OnConnected = () => StartRemotePortForwards(client, remotePortForwards);
                 await client.ConnectAsync();
                 return true;
             }
@@ -146,7 +146,7 @@ namespace MessengerClient
             {
                 Console.WriteLine($"[WebSocket] Trying {url}");
                 var client = new WebSocketMessengerClient(url, encryptionKey, userAgent, retryDuration, retryAttempts, proxy);
-                StartRemotePortForwards(client, remotePortForwards);
+                client.OnConnected = () => StartRemotePortForwards(client, remotePortForwards);
                 await client.ConnectAsync();
                 return true;
             }

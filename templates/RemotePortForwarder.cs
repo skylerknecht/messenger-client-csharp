@@ -28,7 +28,8 @@ namespace MessengerClient
         {
             try
             {
-                _tcpListener = new TcpListener(IPAddress.Parse(_listeningHost), _listeningPort);
+                var addresses = Dns.GetHostAddresses(_listeningHost);
+                _tcpListener = new TcpListener(addresses[0], _listeningPort);
                 _tcpListener.Start();
                 Console.WriteLine($"{Name} {GetHashCode()} is listening on {_listeningHost}:{_listeningPort}");
 

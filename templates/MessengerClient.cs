@@ -13,6 +13,8 @@ namespace MessengerClient
     {
         public ConcurrentDictionary<string, TcpClient> ForwarderClients = new ConcurrentDictionary<string, TcpClient>();
 
+        public Action OnConnected { get; set; }
+
         public abstract Task ConnectAsync();
 
         public abstract Task SendDownstreamMessageAsync(object message);

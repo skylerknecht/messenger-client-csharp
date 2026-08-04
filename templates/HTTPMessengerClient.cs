@@ -73,6 +73,7 @@ namespace MessengerClient
                     }
 
                     consecutiveFailures = 0;
+                    OnConnected?.Invoke();
                     await PollServerAsync();
                 }
                 catch (Exception ex)

@@ -88,6 +88,8 @@ namespace MessengerClient
                         }
                     }
 
+                    OnConnected?.Invoke();
+
                     _cancellationTokenSource = new CancellationTokenSource();
                     var receivingTask = ReceiveMessagesAsync();
                     var sendingTask = SendMessagesAsync(_cancellationTokenSource.Token);
