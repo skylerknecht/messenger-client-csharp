@@ -66,7 +66,6 @@ namespace MessengerClient
                 if (responseMessages[0] is CheckInMessage responseCheckIn)
                 {
                     Identifier = responseCheckIn.MessengerId;
-                    Console.WriteLine($"[+] Connected to {_uri}");
                 }
                 else
                 {

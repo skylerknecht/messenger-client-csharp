@@ -127,7 +127,10 @@ namespace MessengerClient
                 if (socket.AddressFamily == AddressFamily.InterNetworkV6)
                     socket.DualMode = true;
 
-                await socket.ConnectAsync(target, message.Port);
+                var connectTask = socket.ConnectAsync(target, message.Port);
+                if (await Task.WhenAny(connectTask, Task.Delay(5000)) != connectTask)
+                    throw new SocketException((int)SocketError.TimedOut);
+                await connectTask;
 
                 var client = new TcpClient { Client = socket };
                 socket = null;

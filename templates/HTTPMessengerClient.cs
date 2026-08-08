@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace MessengerClient
@@ -37,7 +38,11 @@ namespace MessengerClient
             HttpContent content = new ByteArrayContent(downstreamMessage);
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
 
-            var response = await _httpClient.PostAsync(_uri, content);
+            HttpResponseMessage response;
+            using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            {
+                response = await _httpClient.PostAsync(_uri, content, cts.Token);
+            }
             response.EnsureSuccessStatusCode();
 
             if (string.IsNullOrEmpty(Identifier))
@@ -48,7 +53,6 @@ namespace MessengerClient
                 if (parsedMessage is CheckInMessage checkInMsg)
                 {
                     Identifier = checkInMsg.MessengerId;
-                    Console.WriteLine($"[+] Connected to {_uri}");
                 }
                 else
                 {
@@ -76,7 +80,11 @@ namespace MessengerClient
 
                 HttpContent content = new ByteArrayContent(SerializeMessages(_encryptionKey, downstreamMessages));
                 content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-                var response = await _httpClient.PostAsync(_uri, content);
+                HttpResponseMessage response;
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
+                {
+                    response = await _httpClient.PostAsync(_uri, content, cts.Token);
+                }
 
                 if (!response.IsSuccessStatusCode)
                     throw new HttpRequestException($"Poll failed: HTTP {response.StatusCode}");

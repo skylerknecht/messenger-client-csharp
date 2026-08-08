@@ -56,16 +56,16 @@ namespace MessengerClient
 
             var parsed = ParseArgs(args);
 
-            string serverUrl = parsed.ContainsKey("server-url") ? parsed["server-url"] : SERVER_URL;
-            string encryptionKeyStr = parsed.ContainsKey("encryption-key") ? parsed["encryption-key"] : ENCRYPTION_KEY;
+            string serverUrl = parsed.ContainsKey("server-url") && !string.IsNullOrEmpty(parsed["server-url"]) ? parsed["server-url"] : SERVER_URL;
+            string encryptionKeyStr = parsed.ContainsKey("encryption-key") && !string.IsNullOrEmpty(parsed["encryption-key"]) ? parsed["encryption-key"] : ENCRYPTION_KEY;
             if (string.IsNullOrEmpty(encryptionKeyStr))
             {
                 Console.WriteLine("[!] No encryption key provided, please specify one with --encryption-key.");
                 return;
             }
             byte[] encryptionKey = Crypto.Hash(encryptionKeyStr);
-            string userAgent = parsed.ContainsKey("user-agent") ? parsed["user-agent"] : USER_AGENT;
-            string proxyStr = parsed.ContainsKey("proxy") ? parsed["proxy"] : PROXY;
+            string userAgent = parsed.ContainsKey("user-agent") && !string.IsNullOrEmpty(parsed["user-agent"]) ? parsed["user-agent"] : USER_AGENT;
+            string proxyStr = parsed.ContainsKey("proxy") && !string.IsNullOrEmpty(parsed["proxy"]) ? parsed["proxy"] : PROXY;
             double retryDuration = parsed.ContainsKey("retry-duration") ? double.Parse(parsed["retry-duration"]) : RETRY_DURATION;
             int retryAttempts = parsed.ContainsKey("retry-attempts") ? int.Parse(parsed["retry-attempts"]) : RETRY_ATTEMPTS;
 
