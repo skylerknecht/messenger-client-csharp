@@ -15,18 +15,10 @@ namespace MessengerClient
         private const string PROXY = "{{ proxy }}";
         private const double RETRY_DURATION = {{ retry_duration }};
         private const int RETRY_ATTEMPTS = {{ retry_attempts }};
-        private static readonly string[] REMOTE_PORT_FORWARDS = new string[]
-        {
-            {% for rpf in remote_port_forwards %}
-            "{{ rpf }}",
-            {% endfor %}
-        };
 
         private static Dictionary<string, string> ParseArgs(string[] args)
         {
             var parsed = new Dictionary<string, string>();
-            var rpfs = new List<string>();
-            bool rpfSeen = false;
             for (int i = 0; i < args.Length; i++)
             {
                 switch (args[i])
@@ -49,18 +41,11 @@ namespace MessengerClient
                     case "--retry-attempts":
                         parsed["retry-attempts"] = args[++i];
                         break;
-                    case "--remote-port-forwards":
-                        rpfSeen = true;
-                        while (i + 1 < args.Length && !args[i + 1].StartsWith("--"))
-                            rpfs.Add(args[++i]);
-                        break;
                     default:
                         Console.WriteLine($"[!] Could not find argument `{args[i]}`.");
                         break;
                 }
             }
-            if (rpfSeen)
-                parsed["remote-port-forwards"] = string.Join("|", rpfs);
             return parsed;
         }
 
@@ -83,9 +68,6 @@ namespace MessengerClient
             string proxyStr = parsed.ContainsKey("proxy") ? parsed["proxy"] : PROXY;
             double retryDuration = parsed.ContainsKey("retry-duration") ? double.Parse(parsed["retry-duration"]) : RETRY_DURATION;
             int retryAttempts = parsed.ContainsKey("retry-attempts") ? int.Parse(parsed["retry-attempts"]) : RETRY_ATTEMPTS;
-            string[] remotePortForwards = parsed.ContainsKey("remote-port-forwards")
-                ? parsed["remote-port-forwards"].Split('|')
-                : REMOTE_PORT_FORWARDS;
 
             IWebProxy proxy = null;
             if (!string.IsNullOrEmpty(proxyStr))
@@ -105,70 +87,67 @@ namespace MessengerClient
             }
             else
             {
-                schemes = new[] { "ws", "http", "wss", "https" };
+                schemes = new[] { "ws", "wss", "http", "https" };
             }
+
+            MessengerClient client = null;
 
             foreach (string scheme in schemes)
             {
-                bool success = false;
-                if (scheme.Contains("http"))
-                    success = await TryHttp($"{scheme}://{uri}", encryptionKey, userAgent, retryDuration, retryAttempts, remotePortForwards, proxy);
-                else if (scheme.Contains("ws"))
-                    success = await TryWs($"{scheme}://{uri}", encryptionKey, userAgent, retryDuration, retryAttempts, remotePortForwards, proxy);
+                string candidateUrl = $"{scheme}://{uri}";
 
-                if (success)
-                    return;
-            }
+                if (scheme.Contains("ws"))
+                    client = new WebSocketMessengerClient(candidateUrl, encryptionKey, userAgent, proxy);
+                else if (scheme.Contains("http"))
+                    client = new HTTPMessengerClient(candidateUrl, encryptionKey, userAgent, proxy);
+                else
+                {
+                    Console.WriteLine($"[!] Unsupported scheme: {scheme}");
+                    continue;
+                }
 
-            Console.WriteLine("[!] All connection attempts failed.");
-        }
-
-        private static async Task<bool> TryHttp(string url, byte[] encryptionKey, string userAgent, double retryDuration, int retryAttempts, string[] remotePortForwards, IWebProxy proxy)
-        {
-            try
-            {
-                Console.WriteLine("[*] Attempting to connect over HTTP");
-                var client = new HTTPMessengerClient(url, encryptionKey, userAgent, retryDuration, retryAttempts, proxy);
-                client.OnConnected = () => StartRemotePortForwards(client, remotePortForwards);
-                await client.ConnectAsync();
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[!] Connection failed: {ex.Message}");
-                return false;
-            }
-        }
-
-        private static async Task<bool> TryWs(string url, byte[] encryptionKey, string userAgent, double retryDuration, int retryAttempts, string[] remotePortForwards, IWebProxy proxy)
-        {
-            try
-            {
-                Console.WriteLine("[*] Attempting to connect over WS");
-                var client = new WebSocketMessengerClient(url, encryptionKey, userAgent, retryDuration, retryAttempts, proxy);
-                client.OnConnected = () => StartRemotePortForwards(client, remotePortForwards);
-                await client.ConnectAsync();
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[!] Connection failed: {ex.Message}");
-                return false;
-            }
-        }
-
-        private static void StartRemotePortForwards(MessengerClient client, string[] remotePortForwards)
-        {
-            foreach (var config in remotePortForwards)
-            {
                 try
                 {
-                    var forwarder = new RemotePortForwarder(client, config);
-                    _ = forwarder.StartAsync();
+                    await client.ConnectAsync();
+                    Console.WriteLine($"[+] Connected to {candidateUrl}");
+                    await client.StartAsync();
+                    break;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[!] Failed to start Remote Port Forwarder: {config}");
+                    Console.WriteLine($"[!] Connection failed: {ex.Message}");
+                    client = null;
+                    continue;
+                }
+            }
+
+            if (client == null)
+            {
+                Console.WriteLine("[!] All connection attempts failed.");
+                return;
+            }
+
+            if (retryAttempts <= 0)
+                return;
+
+            int sleepInterval = (int)((retryDuration / retryAttempts) * 1000);
+            int consecutiveFailures = 0;
+
+            while (consecutiveFailures < retryAttempts)
+            {
+                await Task.Delay(sleepInterval);
+
+                try
+                {
+                    await client.ConnectAsync();
+                    Console.WriteLine("[+] Reconnected");
+                    consecutiveFailures = 0;
+                    await client.StartAsync();
+                }
+                catch (Exception ex)
+                {
+                    consecutiveFailures++;
+                    Console.WriteLine($"[!] Reconnection failed: {ex.Message}");
                 }
             }
         }

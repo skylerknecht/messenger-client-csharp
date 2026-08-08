@@ -4,9 +4,6 @@ using System.Text;
 using System.Security.Cryptography;
 
 
-// ----------------------------------------------------------------------
-// 1. Message Classes (now using int instead of uint)
-// ----------------------------------------------------------------------
 public class CheckInMessage
 {
     public string MessengerId { get; }
@@ -16,59 +13,96 @@ public class CheckInMessage
     }
 }
 
-public class InitiateForwarderClientReq
+public class InitiateTCPClientReq
 {
-    public string ForwarderClientId { get; }
+    public string ClientId { get; }
     public string IpAddress { get; }
     public int Port { get; }
 
-    public InitiateForwarderClientReq(string forwarderClientId, string ipAddress, int port)
+    public InitiateTCPClientReq(string clientId, string ipAddress, int port)
     {
-        ForwarderClientId = forwarderClientId;
+        ClientId = clientId;
         IpAddress = ipAddress;
         Port = port;
     }
 }
 
-public class InitiateForwarderClientRep
+public class InitiateTCPClientRep
 {
-    public string ForwarderClientId { get; }
+    public string ClientId { get; }
     public string BindAddress { get; }
     public int BindPort { get; }
     public int AddressType { get; }
     public int Reason { get; }
+    public string RemoteAddr { get; }
+    public int RemotePort { get; }
 
-    public InitiateForwarderClientRep(
-        string forwarderClientId,
+    public InitiateTCPClientRep(
+        string clientId,
         string bindAddress,
         int bindPort,
         int addressType,
-        int reason)
+        int reason,
+        string remoteAddr,
+        int remotePort)
     {
-        ForwarderClientId = forwarderClientId;
+        ClientId = clientId;
         BindAddress = bindAddress;
         BindPort = bindPort;
         AddressType = addressType;
         Reason = reason;
+        RemoteAddr = remoteAddr;
+        RemotePort = remotePort;
     }
 }
 
 public class SendDataMessage
 {
-    public string ForwarderClientId { get; }
+    public string ClientId { get; }
     public byte[] Data { get; }
 
-    public SendDataMessage(string forwarderClientId, byte[] data)
+    public SendDataMessage(string clientId, byte[] data)
     {
-        ForwarderClientId = forwarderClientId;
+        ClientId = clientId;
         Data = data;
     }
 }
 
+public class InitiateBINDReq
+{
+    public string BindId { get; }
+    public string ListeningHost { get; }
+    public int ListeningPort { get; }
+    public string DestinationHost { get; }
+    public int DestinationPort { get; }
 
-// ----------------------------------------------------------------------
-// 2. MessageParser: Reading/Decrypting Bytes
-// ----------------------------------------------------------------------
+    public InitiateBINDReq(string bindId, string listeningHost, int listeningPort, string destinationHost, int destinationPort)
+    {
+        BindId = bindId;
+        ListeningHost = listeningHost;
+        ListeningPort = listeningPort;
+        DestinationHost = destinationHost;
+        DestinationPort = destinationPort;
+    }
+}
+
+public class InitiateBINDRep
+{
+    public string BindId { get; }
+    public string ListeningHost { get; }
+    public int ListeningPort { get; }
+    public int Reason { get; }
+
+    public InitiateBINDRep(string bindId, string listeningHost, int listeningPort, int reason)
+    {
+        BindId = bindId;
+        ListeningHost = listeningHost;
+        ListeningPort = listeningPort;
+        Reason = reason;
+    }
+}
+
+
 public static class MessageParser
 {
     public static (uint Value, byte[] Remainder) ReadUInt32(byte[] data)
@@ -100,46 +134,59 @@ public static class MessageParser
         return new CheckInMessage(messengerId);
     }
 
-    public static InitiateForwarderClientReq ParseInitiateForwarderClientReq(byte[] value)
+    public static InitiateTCPClientReq ParseInitiateTCPClientReq(byte[] value)
     {
-        var (forwarderClientId, remainder) = ReadString(value);
+        var (clientId, remainder) = ReadString(value);
         var (ipAddress, remainder2) = ReadString(remainder);
-        var (port, remainder3) = ReadUInt32(remainder2);
+        var (port, _) = ReadUInt32(remainder2);
 
-        return new InitiateForwarderClientReq(
-            forwarderClientId,
-            ipAddress,
-            (int)port
-        );
+        return new InitiateTCPClientReq(clientId, ipAddress, (int)port);
     }
 
-    public static InitiateForwarderClientRep ParseInitiateForwarderClientRep(byte[] value)
+    public static InitiateTCPClientRep ParseInitiateTCPClientRep(byte[] value)
     {
-        var (forwarderClientId, remainder) = ReadString(value);
+        var (clientId, remainder) = ReadString(value);
         var (bindAddress, remainder2) = ReadString(remainder);
         var (bindPort, remainder3) = ReadUInt32(remainder2);
         var (addressType, remainder4) = ReadUInt32(remainder3);
         var (reason, remainder5) = ReadUInt32(remainder4);
+        var (remoteAddr, remainder6) = ReadString(remainder5);
+        var (remotePort, _) = ReadUInt32(remainder6);
 
-        return new InitiateForwarderClientRep(
-            forwarderClientId,
-            bindAddress,
-            (int)bindPort,
-            (int)addressType,
-            (int)reason
+        return new InitiateTCPClientRep(
+            clientId, bindAddress, (int)bindPort, (int)addressType, (int)reason,
+            remoteAddr, (int)remotePort
         );
     }
 
     public static SendDataMessage ParseSendData(byte[] value)
     {
-        var (forwarderClientId, remainder) = ReadString(value);
-        var (encodedData, remainder2) = ReadString(remainder);
+        var (clientId, remainder) = ReadString(value);
+        var (encodedData, _) = ReadString(remainder);
 
         byte[] rawData = Convert.FromBase64String(encodedData);
-        return new SendDataMessage(
-            forwarderClientId,
-            rawData
-        );
+        return new SendDataMessage(clientId, rawData);
+    }
+
+    public static InitiateBINDReq ParseInitiateBINDReq(byte[] value)
+    {
+        var (bindId, remainder) = ReadString(value);
+        var (listeningHost, remainder2) = ReadString(remainder);
+        var (listeningPort, remainder3) = ReadUInt32(remainder2);
+        var (destinationHost, remainder4) = ReadString(remainder3);
+        var (destinationPort, _) = ReadUInt32(remainder4);
+
+        return new InitiateBINDReq(bindId, listeningHost, (int)listeningPort, destinationHost, (int)destinationPort);
+    }
+
+    public static InitiateBINDRep ParseInitiateBINDRep(byte[] value)
+    {
+        var (bindId, remainder) = ReadString(value);
+        var (listeningHost, remainder2) = ReadString(remainder);
+        var (listeningPort, remainder3) = ReadUInt32(remainder2);
+        var (reason, _) = ReadUInt32(remainder3);
+
+        return new InitiateBINDRep(bindId, listeningHost, (int)listeningPort, (int)reason);
     }
 
     public static (byte[] leftover, object parsedMessage) DeserializeMessage(
@@ -165,13 +212,13 @@ public static class MessageParser
             case 0x01:
                 {
                     byte[] decrypted = MessengerClient.Crypto.Decrypt(encryptionKey, payload);
-                    parsedMsg = ParseInitiateForwarderClientReq(decrypted);
+                    parsedMsg = ParseInitiateTCPClientReq(decrypted);
                     break;
                 }
             case 0x02:
                 {
                     byte[] decrypted = MessengerClient.Crypto.Decrypt(encryptionKey, payload);
-                    parsedMsg = ParseInitiateForwarderClientRep(decrypted);
+                    parsedMsg = ParseInitiateTCPClientRep(decrypted);
                     break;
                 }
             case 0x03:
@@ -185,6 +232,18 @@ public static class MessageParser
                     parsedMsg = ParseCheckIn(payload);
                     break;
                 }
+            case 0x05:
+                {
+                    byte[] decrypted = MessengerClient.Crypto.Decrypt(encryptionKey, payload);
+                    parsedMsg = ParseInitiateBINDReq(decrypted);
+                    break;
+                }
+            case 0x06:
+                {
+                    byte[] decrypted = MessengerClient.Crypto.Decrypt(encryptionKey, payload);
+                    parsedMsg = ParseInitiateBINDRep(decrypted);
+                    break;
+                }
             default:
                 throw new ArgumentException($"Unknown message type: 0x{messageType:X}");
         }
@@ -194,9 +253,6 @@ public static class MessageParser
 }
 
 
-// ----------------------------------------------------------------------
-// 3. MessageBuilder: Creating/Encrypting Bytes
-// ----------------------------------------------------------------------
 public static class MessageBuilder
 {
     public static byte[] SerializeMessage(byte[] encryptionKey, object msg)
@@ -206,28 +262,21 @@ public static class MessageBuilder
 
         switch (msg)
         {
-            case InitiateForwarderClientReq req:
+            case InitiateTCPClientReq req:
                 messageType = 0x01;
                 payload = MessengerClient.Crypto.Encrypt(
                     encryptionKey,
-                    BuildInitiateForwarderClientReq(
-                        req.ForwarderClientId,
-                        req.IpAddress,
-                        req.Port
-                    )
+                    BuildInitiateTCPClientReq(req.ClientId, req.IpAddress, req.Port)
                 );
                 break;
 
-            case InitiateForwarderClientRep rep:
+            case InitiateTCPClientRep rep:
                 messageType = 0x02;
                 payload = MessengerClient.Crypto.Encrypt(
                     encryptionKey,
-                    BuildInitiateForwarderClientRep(
-                        rep.ForwarderClientId,
-                        rep.BindAddress,
-                        rep.BindPort,
-                        rep.AddressType,
-                        rep.Reason
+                    BuildInitiateTCPClientRep(
+                        rep.ClientId, rep.BindAddress, rep.BindPort,
+                        rep.AddressType, rep.Reason, rep.RemoteAddr, rep.RemotePort
                     )
                 );
                 break;
@@ -236,16 +285,35 @@ public static class MessageBuilder
                 messageType = 0x03;
                 payload = MessengerClient.Crypto.Encrypt(
                     encryptionKey,
-                    BuildSendData(
-                        sdm.ForwarderClientId,
-                        sdm.Data
-                    )
+                    BuildSendData(sdm.ClientId, sdm.Data)
                 );
                 break;
 
             case CheckInMessage cim:
                 messageType = 0x04;
                 payload = BuildCheckInMessage(cim.MessengerId);
+                break;
+
+            case InitiateBINDReq bindReq:
+                messageType = 0x05;
+                payload = MessengerClient.Crypto.Encrypt(
+                    encryptionKey,
+                    BuildInitiateBINDReq(
+                        bindReq.BindId, bindReq.ListeningHost, bindReq.ListeningPort,
+                        bindReq.DestinationHost, bindReq.DestinationPort
+                    )
+                );
+                break;
+
+            case InitiateBINDRep bindRep:
+                messageType = 0x06;
+                payload = MessengerClient.Crypto.Encrypt(
+                    encryptionKey,
+                    BuildInitiateBINDRep(
+                        bindRep.BindId, bindRep.ListeningHost, bindRep.ListeningPort,
+                        bindRep.Reason
+                    )
+                );
                 break;
 
             default:
@@ -280,12 +348,9 @@ public static class MessageBuilder
         return BuildString(messengerId);
     }
 
-    public static byte[] BuildInitiateForwarderClientReq(
-        string forwarderClientId,
-        string ipAddress,
-        int port)
+    public static byte[] BuildInitiateTCPClientReq(string clientId, string ipAddress, int port)
     {
-        var part1 = BuildString(forwarderClientId);
+        var part1 = BuildString(clientId);
         var part2 = BuildString(ipAddress);
 
         byte[] part3 = new byte[4];
@@ -294,14 +359,11 @@ public static class MessageBuilder
         return Combine(part1, part2, part3);
     }
 
-    public static byte[] BuildInitiateForwarderClientRep(
-        string forwarderClientId,
-        string bindAddress,
-        int bindPort,
-        int addressType,
-        int reason)
+    public static byte[] BuildInitiateTCPClientRep(
+        string clientId, string bindAddress, int bindPort,
+        int addressType, int reason, string remoteAddr, int remotePort)
     {
-        var part1 = BuildString(forwarderClientId);
+        var part1 = BuildString(clientId);
         var part2 = BuildString(bindAddress);
 
         byte[] part3 = new byte[12];
@@ -309,18 +371,52 @@ public static class MessageBuilder
         WriteUInt32(part3, 4, (uint)addressType);
         WriteUInt32(part3, 8, (uint)reason);
 
-        return Combine(part1, part2, part3);
+        var part4 = BuildString(remoteAddr);
+
+        byte[] part5 = new byte[4];
+        WriteUInt32(part5, 0, (uint)remotePort);
+
+        return Combine(part1, part2, part3, part4, part5);
     }
 
-    public static byte[] BuildSendData(
-        string forwarderClientId,
-        byte[] data)
+    public static byte[] BuildSendData(string clientId, byte[] data)
     {
-        var part1 = BuildString(forwarderClientId);
+        var part1 = BuildString(clientId);
         string encodedData = Convert.ToBase64String(data);
         var part2 = BuildString(encodedData);
 
         return Combine(part1, part2);
+    }
+
+    public static byte[] BuildInitiateBINDReq(
+        string bindId, string listeningHost, int listeningPort,
+        string destinationHost, int destinationPort)
+    {
+        var part1 = BuildString(bindId);
+        var part2 = BuildString(listeningHost);
+
+        byte[] part3 = new byte[4];
+        WriteUInt32(part3, 0, (uint)listeningPort);
+
+        var part4 = BuildString(destinationHost);
+
+        byte[] part5 = new byte[4];
+        WriteUInt32(part5, 0, (uint)destinationPort);
+
+        return Combine(part1, part2, part3, part4, part5);
+    }
+
+    public static byte[] BuildInitiateBINDRep(
+        string bindId, string listeningHost, int listeningPort, int reason)
+    {
+        var part1 = BuildString(bindId);
+        var part2 = BuildString(listeningHost);
+
+        byte[] part3 = new byte[8];
+        WriteUInt32(part3, 0, (uint)listeningPort);
+        WriteUInt32(part3, 4, (uint)reason);
+
+        return Combine(part1, part2, part3);
     }
 
     public static void WriteUInt32(byte[] buffer, int offset, uint value)

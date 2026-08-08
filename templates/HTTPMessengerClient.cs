@@ -12,17 +12,12 @@ namespace MessengerClient
         private readonly string _uri;
         private readonly HttpClient _httpClient;
         private readonly byte[] _encryptionKey;
-        private readonly double _retryDuration;
-        private readonly int _retryAttempts;
         private readonly ConcurrentQueue<object> _downstreamMessages;
-        private string _messengerId = string.Empty;
 
-        public HTTPMessengerClient(string uri, byte[] encryptionKey, string userAgent, double retryDuration, int retryAttempts, IWebProxy proxy = null)
+        public HTTPMessengerClient(string uri, byte[] encryptionKey, string userAgent, IWebProxy proxy = null)
         {
             _uri = uri;
             _encryptionKey = encryptionKey;
-            _retryDuration = retryDuration;
-            _retryAttempts = retryAttempts;
 
             var handler = new HttpClientHandler();
             if (proxy != null)
@@ -38,70 +33,45 @@ namespace MessengerClient
 
         public override async Task ConnectAsync()
         {
-            int retryDelay = (int)((_retryDuration / _retryAttempts) * 1000);
-            int consecutiveFailures = 0;
+            var downstreamMessage = MessageBuilder.SerializeMessage(_encryptionKey, new CheckInMessage(Identifier));
+            HttpContent content = new ByteArrayContent(downstreamMessage);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
 
-            while (consecutiveFailures < _retryAttempts)
+            var response = await _httpClient.PostAsync(_uri, content);
+            response.EnsureSuccessStatusCode();
+
+            if (string.IsNullOrEmpty(Identifier))
             {
-                try
+                byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
+                var (_, parsedMessage) = MessageParser.DeserializeMessage(_encryptionKey, responseBytes);
+
+                if (parsedMessage is CheckInMessage checkInMsg)
                 {
-                    var downstreamMessage = MessageBuilder.SerializeMessage(_encryptionKey, new CheckInMessage(_messengerId));
-                    HttpContent content = new ByteArrayContent(downstreamMessage);
-                    content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-
-                    var response = await _httpClient.PostAsync(_uri, content);
-                    response.EnsureSuccessStatusCode();
-
-                    if (string.IsNullOrEmpty(_messengerId))
-                    {
-                        byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
-                        var (_, parsedMessage) = MessageParser.DeserializeMessage(_encryptionKey, responseBytes);
-
-                        if (parsedMessage is CheckInMessage checkInMsg)
-                        {
-                            _messengerId = checkInMsg.MessengerId;
-                            Console.WriteLine($"[+] Connected to {_uri}");
-                        }
-                        else
-                        {
-                            throw new InvalidOperationException(
-                                $"Expected CheckInMessage, got {parsedMessage.GetType().Name}"
-                            );
-                        }
-                    }
-
-                    consecutiveFailures = 0;
-                    OnConnected?.Invoke();
-                    await PollServerAsync();
+                    Identifier = checkInMsg.MessengerId;
+                    Console.WriteLine($"[+] Connected to {_uri}");
                 }
-                catch (Exception ex)
+                else
                 {
-                    consecutiveFailures++;
-                    Console.WriteLine($"[!] Connection failed: {ex.Message}");
-                    if (consecutiveFailures < _retryAttempts)
-                    {
-                        Console.WriteLine("[*] Retrying connection...");
-                        await Task.Delay(retryDelay);
-                    }
+                    throw new InvalidOperationException(
+                        $"Expected CheckInMessage, got {parsedMessage.GetType().Name}"
+                    );
                 }
             }
-
-            Console.WriteLine($"[-] Reconnect failed after {_retryAttempts} attempts. Giving up.");
         }
 
-
-        private async Task PollServerAsync()
+        public override async Task StartAsync()
         {
             while (true)
             {
                 var downstreamMessages = new List<object>();
 
-                CheckInMessage checkInMessage = new CheckInMessage(_messengerId);
-                downstreamMessages.Add(checkInMessage);
+                downstreamMessages.Add(new CheckInMessage(Identifier));
 
-                while (_downstreamMessages.TryDequeue(out var message))
+                int drained = 0;
+                while (drained < 5 && _downstreamMessages.TryDequeue(out var message))
                 {
                     downstreamMessages.Add(message);
+                    drained++;
                 }
 
                 HttpContent content = new ByteArrayContent(SerializeMessages(_encryptionKey, downstreamMessages));
@@ -133,32 +103,36 @@ namespace MessengerClient
         {
             switch (message)
             {
-                case InitiateForwarderClientReq reqMessage:
-                    await HandleInitiateForwarderClientReqAsync(reqMessage);
+                case InitiateTCPClientReq reqMessage:
+                    await HandleInitiateTCPClientReqAsync(reqMessage);
                     break;
 
-                case InitiateForwarderClientRep repMessage:
-                    if (!ForwarderClients.TryGetValue(repMessage.ForwarderClientId, out var repClient))
+                case InitiateTCPClientRep repMessage:
+                    if (!TcpClients.TryGetValue(repMessage.ClientId, out var repClient))
                         break;
                     if (repMessage.Reason != 0)
                     {
-                        if (ForwarderClients.TryRemove(repMessage.ForwarderClientId, out var denied))
+                        if (TcpClients.TryRemove(repMessage.ClientId, out var denied))
                             denied.Close();
                         break;
                     }
-                    await StreamAsync(repMessage.ForwarderClientId);
+                    await StreamAsync(repMessage.ClientId);
                     break;
 
                 case SendDataMessage sendDataMessage:
                     if (sendDataMessage.Data.Length == 0)
                     {
-                        if (ForwarderClients.TryRemove(sendDataMessage.ForwarderClientId, out var closedClient))
+                        if (TcpClients.TryRemove(sendDataMessage.ClientId, out var closedClient))
                             closedClient.Close();
                     }
-                    else if (ForwarderClients.TryGetValue(sendDataMessage.ForwarderClientId, out var client))
+                    else if (TcpClients.TryGetValue(sendDataMessage.ClientId, out var client))
                     {
                         await client.GetStream().WriteAsync(sendDataMessage.Data, 0, sendDataMessage.Data.Length);
                     }
+                    break;
+
+                case InitiateBINDReq bindReqMessage:
+                    await HandleBindAsync(bindReqMessage);
                     break;
 
                 case CheckInMessage checkInMessage:

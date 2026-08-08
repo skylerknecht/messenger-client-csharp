@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
@@ -8,64 +9,98 @@ namespace MessengerClient
     public class RemotePortForwarder
     {
         private readonly MessengerClient _messenger;
+        public string Identifier { get; }
         private readonly string _listeningHost;
         private readonly int _listeningPort;
         private readonly string _destinationHost;
         private readonly int _destinationPort;
 
         private TcpListener _tcpListener;
+        private readonly List<string> _clientIds = new List<string>();
 
-        public string Identifier { get; private set; }
-
-        public RemotePortForwarder(MessengerClient messenger, string config)
+        public RemotePortForwarder(MessengerClient messenger, string bindId, string listeningHost, int listeningPort, string destinationHost, int destinationPort)
         {
             _messenger = messenger;
-            (_listeningHost, _listeningPort, _destinationHost, _destinationPort) = ParseConfig(config);
-            Identifier = MessengerClient.AlphanumericIdentifier();
+            Identifier = bindId;
+            _listeningHost = listeningHost;
+            _listeningPort = listeningPort;
+            _destinationHost = destinationHost;
+            _destinationPort = destinationPort;
         }
 
-        public async Task StartAsync()
+        public async Task<bool> StartAsync()
         {
             try
             {
                 var addresses = Dns.GetHostAddresses(_listeningHost);
                 _tcpListener = new TcpListener(addresses[0], _listeningPort);
                 _tcpListener.Start();
-                Console.WriteLine($"[+] Remote Port Forwarder {Identifier} is listening on {_listeningHost}:{_listeningPort}");
+                Console.WriteLine($"[+] Remote Port Forwarder listening on {_listeningHost}:{_listeningPort}");
 
-                while (true)
+                _ = Task.Run(async () =>
                 {
-                    var client = await _tcpListener.AcceptTcpClientAsync();
-                    _ = HandleClientAsync(client);
-                }
+                    try
+                    {
+                        while (true)
+                        {
+                            var client = await _tcpListener.AcceptTcpClientAsync();
+                            _ = HandleClientAsync(client);
+                        }
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                    }
+                    catch (SocketException)
+                    {
+                    }
+                });
+
+                return true;
             }
             catch (SocketException ex)
             {
                 Console.WriteLine($"[!] {_listeningHost}:{_listeningPort} is already in use or encountered an error: {ex.Message}");
+                return false;
+            }
+        }
+
+        public void Stop()
+        {
+            try
+            {
+                _tcpListener?.Stop();
+            }
+            catch
+            {
+            }
+        }
+
+        public void CloseAllClients()
+        {
+            foreach (var clientId in _clientIds)
+            {
+                TcpClient client;
+                if (_messenger.TcpClients.TryRemove(clientId, out client))
+                {
+                    try { client.Close(); } catch { }
+                }
             }
         }
 
         private async Task HandleClientAsync(TcpClient client)
         {
             var clientId = MessengerClient.AlphanumericIdentifier();
+            _clientIds.Add(clientId);
 
-            var downstreamMessage = new InitiateForwarderClientReq(
+            _messenger.TcpClients[clientId] = client;
+
+            var downstreamMessage = new InitiateTCPClientReq(
                 clientId,
                 _destinationHost,
                 _destinationPort
             );
 
-            _messenger.ForwarderClients[clientId] = client;
             await _messenger.SendDownstreamMessageAsync(downstreamMessage);
-        }
-
-        private (string listeningHost, int listeningPort, string destinationHost, int destinationPort) ParseConfig(string config)
-        {
-            var parts = config.Split(':');
-            if (parts.Length != 4)
-                throw new ArgumentException("Invalid config format. Expected format: listeningHost:listeningPort:destinationHost:destinationPort");
-
-            return (parts[0], int.Parse(parts[1]), parts[2], int.Parse(parts[3]));
         }
     }
 }

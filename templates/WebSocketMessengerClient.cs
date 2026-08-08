@@ -14,102 +14,80 @@ namespace MessengerClient
         private readonly Uri _uri;
         private readonly byte[] _encryptionKey;
         private readonly string _userAgent;
-        private readonly double _retryDuration;
-        private readonly int _retryAttempts;
         private readonly IWebProxy _proxy;
         private ClientWebSocket _webSocket;
         private readonly ConcurrentQueue<object> _downstreamMessages;
-        private string _messengerId;
         private CancellationTokenSource _cancellationTokenSource;
 
-        public WebSocketMessengerClient(string uri, byte[] encryptionKey, string userAgent, double retryDuration, int retryAttempts, IWebProxy proxy = null)
+        public WebSocketMessengerClient(string uri, byte[] encryptionKey, string userAgent, IWebProxy proxy = null)
         {
             _uri = new Uri(uri);
             _encryptionKey = encryptionKey;
             _userAgent = userAgent;
-            _retryDuration = retryDuration;
-            _retryAttempts = retryAttempts;
             _proxy = proxy;
             _webSocket = new ClientWebSocket();
             _downstreamMessages = new ConcurrentQueue<object>();
-            _messengerId = String.Empty;
         }
 
         public override async Task ConnectAsync()
         {
-            int retryDelay = (int)((_retryDuration / _retryAttempts) * 1000);
-            int consecutiveFailures = 0;
+            _cancellationTokenSource?.Cancel();
+            _cancellationTokenSource?.Dispose();
 
-            while (consecutiveFailures < _retryAttempts)
+            _webSocket?.Dispose();
+            _webSocket = new ClientWebSocket();
+            if (_proxy != null)
+                _webSocket.Options.Proxy = _proxy;
+
+            await _webSocket.ConnectAsync(_uri, CancellationToken.None);
+
+            var checkIn = new CheckInMessage(Identifier);
+            var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, new List<object> { checkIn }));
+            await _webSocket.SendAsync(content, WebSocketMessageType.Binary, true, CancellationToken.None);
+
+            if (string.IsNullOrEmpty(Identifier))
             {
-                try
+                var ms = new MemoryStream();
+                var buffer = new byte[4096];
+                WebSocketReceiveResult result;
+                do
                 {
-                    _cancellationTokenSource?.Cancel();
-                    _cancellationTokenSource?.Dispose();
+                    result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                        throw new WebSocketException("Server closed during check-in");
+                    ms.Write(buffer, 0, result.Count);
+                } while (!result.EndOfMessage);
 
-                    _webSocket?.Dispose();
-                    _webSocket = new ClientWebSocket();
-                    if (_proxy != null)
-                        _webSocket.Options.Proxy = _proxy;
-                    await _webSocket.ConnectAsync(_uri, CancellationToken.None);
+                byte[] messageData = ms.ToArray();
+                ms.Dispose();
 
-                    var checkIn = new CheckInMessage(_messengerId);
-                    var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, new List<object> { checkIn }));
-                    await _webSocket.SendAsync(content, WebSocketMessageType.Binary, true, CancellationToken.None);
+                var responseMessages = DeserializeMessages(_encryptionKey, messageData);
 
-                    if (string.IsNullOrEmpty(_messengerId))
-                    {
-                        var ms = new MemoryStream();
-                        var buffer = new byte[4096];
-                        WebSocketReceiveResult result;
-                        do
-                        {
-                            result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-                            if (result.MessageType == WebSocketMessageType.Close)
-                                throw new WebSocketException("Server closed during check-in");
-                            ms.Write(buffer, 0, result.Count);
-                        } while (!result.EndOfMessage);
-
-                        byte[] messageData = ms.ToArray();
-                        ms.Dispose();
-
-                        var responseMessages = DeserializeMessages(_encryptionKey, messageData);
-
-                        if (responseMessages[0] is CheckInMessage responseCheckIn)
-                        {
-                            _messengerId = responseCheckIn.MessengerId;
-                            Console.WriteLine($"[+] Connected to {_uri}");
-                        }
-                        else
-                        {
-                            throw new Exception("Expected CheckInMessage from server");
-                        }
-                    }
-
-                    OnConnected?.Invoke();
-
-                    _cancellationTokenSource = new CancellationTokenSource();
-                    var receivingTask = ReceiveMessagesAsync();
-                    var sendingTask = SendMessagesAsync(_cancellationTokenSource.Token);
-
-                    await Task.WhenAll(receivingTask, sendingTask);
-                    consecutiveFailures = 0;
+                if (responseMessages[0] is CheckInMessage responseCheckIn)
+                {
+                    Identifier = responseCheckIn.MessengerId;
+                    Console.WriteLine($"[+] Connected to {_uri}");
                 }
-                catch (Exception ex)
+                else
                 {
-                    consecutiveFailures++;
-                    Console.WriteLine($"[!] Connection failed: {ex.Message}");
-                    if (consecutiveFailures < _retryAttempts)
-                    {
-                        Console.WriteLine("[*] Retrying connection...");
-                        await Task.Delay(retryDelay);
-                    }
+                    throw new Exception("Expected CheckInMessage from server");
                 }
             }
-
-            Console.WriteLine($"[-] Reconnect failed after {_retryAttempts} attempts. Giving up.");
         }
 
+        public override async Task StartAsync()
+        {
+            while (_downstreamMessages.TryDequeue(out var queued))
+            {
+                await SendImmediateAsync(queued);
+            }
+
+            _cancellationTokenSource = new CancellationTokenSource();
+            var receivingTask = ReceiveMessagesAsync();
+            var sendingTask = SendMessagesAsync(_cancellationTokenSource.Token);
+
+            await Task.WhenAll(receivingTask, sendingTask);
+        }
 
         private async Task ReceiveMessagesAsync()
         {
@@ -164,36 +142,40 @@ namespace MessengerClient
         {
             switch (message)
             {
-                case InitiateForwarderClientReq reqMessage:
-                    await HandleInitiateForwarderClientReqAsync(reqMessage);
+                case InitiateTCPClientReq reqMessage:
+                    await HandleInitiateTCPClientReqAsync(reqMessage);
                     break;
 
-                case InitiateForwarderClientRep repMessage:
-                    if (!ForwarderClients.TryGetValue(repMessage.ForwarderClientId, out var repClient))
+                case InitiateTCPClientRep repMessage:
+                    if (!TcpClients.TryGetValue(repMessage.ClientId, out var repClient))
                         break;
                     if (repMessage.Reason != 0)
                     {
-                        if (ForwarderClients.TryRemove(repMessage.ForwarderClientId, out var denied))
+                        if (TcpClients.TryRemove(repMessage.ClientId, out var denied))
                             denied.Close();
                         break;
                     }
-                    await StreamAsync(repMessage.ForwarderClientId);
+                    await StreamAsync(repMessage.ClientId);
                     break;
 
                 case SendDataMessage sendDataMessage:
                     if (sendDataMessage.Data.Length == 0)
                     {
-                        if (ForwarderClients.TryRemove(sendDataMessage.ForwarderClientId, out var closedClient))
+                        if (TcpClients.TryRemove(sendDataMessage.ClientId, out var closedClient))
                             closedClient.Close();
                     }
-                    else if (ForwarderClients.TryGetValue(sendDataMessage.ForwarderClientId, out var client))
+                    else if (TcpClients.TryGetValue(sendDataMessage.ClientId, out var client))
                     {
                         await client.GetStream().WriteAsync(sendDataMessage.Data, 0, sendDataMessage.Data.Length);
                     }
                     break;
 
+                case InitiateBINDReq bindReqMessage:
+                    await HandleBindAsync(bindReqMessage);
+                    break;
+
                 case CheckInMessage checkInMessage:
-                    _messengerId = checkInMessage.MessengerId;
+                    Identifier = checkInMessage.MessengerId;
                     break;
 
                 default:
@@ -201,10 +183,23 @@ namespace MessengerClient
             }
         }
 
-        public override Task SendDownstreamMessageAsync(object message)
+        public override async Task SendDownstreamMessageAsync(object message)
         {
-            _downstreamMessages.Enqueue(message);
-            return Task.CompletedTask;
+            if (_webSocket != null && _webSocket.State == WebSocketState.Open)
+            {
+                await SendImmediateAsync(message);
+            }
+            else
+            {
+                _downstreamMessages.Enqueue(message);
+            }
+        }
+
+        private async Task SendImmediateAsync(object message)
+        {
+            var messages = new List<object> { new CheckInMessage(Identifier), message };
+            var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, messages));
+            await _webSocket.SendAsync(content, WebSocketMessageType.Binary, true, CancellationToken.None);
         }
 
         private async Task SendMessagesAsync(CancellationToken token)
@@ -217,11 +212,11 @@ namespace MessengerClient
                     continue;
                 }
 
-                var downstreamMessages = new List<object>{ new CheckInMessage(_messengerId) };
+                var downstreamMessages = new List<object>{ new CheckInMessage(Identifier) };
 
-                while (_downstreamMessages.TryDequeue(out var message))
+                while (_downstreamMessages.TryDequeue(out var msg))
                 {
-                    downstreamMessages.Add(message);
+                    downstreamMessages.Add(msg);
                 }
 
                 var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, downstreamMessages));

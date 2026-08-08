@@ -20,8 +20,6 @@ def add_arguments(parser):
                      help="Custom HTTP/WebSocket User-Agent string (optional).")
     cfg.add_argument("--proxy", default="",
                      help="Proxy to use (optional).")
-    cfg.add_argument("--remote-port-forwards", nargs="*", default=[],
-                     help="Space delimited remote port forwards LISTENING-IP:LISTENING-PORT:REMOTE-IP:REMOTE-PORT (optional).")
 
     retry = parser.add_argument_group("Retry behavior")
     retry.add_argument("--retry-duration", type=float, default=60.0,
