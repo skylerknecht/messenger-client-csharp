@@ -4,6 +4,14 @@ using System.Text;
 using System.Security.Cryptography;
 
 
+// Thrown when an encrypted payload cannot be decrypted — almost always a wrong
+// encryption key. Treated as fatal: the messenger can never decrypt server
+// traffic, so Main logs once and stops instead of reconnecting in a loop.
+public class DecryptionException : Exception
+{
+    public DecryptionException(string message, Exception inner) : base(message, inner) { }
+}
+
 public class CheckInMessage
 {
     public string MessengerId { get; }
@@ -150,8 +158,19 @@ public static class MessageParser
         var (bindPort, remainder3) = ReadUInt32(remainder2);
         var (addressType, remainder4) = ReadUInt32(remainder3);
         var (reason, remainder5) = ReadUInt32(remainder4);
-        var (remoteAddr, remainder6) = ReadString(remainder5);
-        var (remotePort, _) = ReadUInt32(remainder6);
+
+        // remote_addr / remote_port are optional — the server omits them when
+        // it has no remote info (e.g. a reason!=0 denial). Only read them if
+        // bytes remain, otherwise a Rep without them overruns the buffer.
+        string remoteAddr = "";
+        uint remotePort = 0;
+        if (remainder5.Length > 0)
+        {
+            var (ra, remainder6) = ReadString(remainder5);
+            var (rp, _) = ReadUInt32(remainder6);
+            remoteAddr = ra;
+            remotePort = rp;
+        }
 
         return new InitiateTCPClientRep(
             clientId, bindAddress, (int)bindPort, (int)addressType, (int)reason,
@@ -189,6 +208,22 @@ public static class MessageParser
         return new InitiateBINDRep(bindId, listeningHost, (int)listeningPort, (int)reason);
     }
 
+    private static byte[] DecryptOrThrow(byte[] encryptionKey, byte[] payload)
+    {
+        try
+        {
+            return MessengerClient.Crypto.Decrypt(encryptionKey, payload);
+        }
+        catch (DecryptionException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new DecryptionException("Failed to decrypt payload", ex);
+        }
+    }
+
     public static (byte[] leftover, object parsedMessage) DeserializeMessage(
         byte[] encryptionKey,
         byte[] rawData)
@@ -211,19 +246,19 @@ public static class MessageParser
         {
             case 0x01:
                 {
-                    byte[] decrypted = MessengerClient.Crypto.Decrypt(encryptionKey, payload);
+                    byte[] decrypted = DecryptOrThrow(encryptionKey, payload);
                     parsedMsg = ParseInitiateTCPClientReq(decrypted);
                     break;
                 }
             case 0x02:
                 {
-                    byte[] decrypted = MessengerClient.Crypto.Decrypt(encryptionKey, payload);
+                    byte[] decrypted = DecryptOrThrow(encryptionKey, payload);
                     parsedMsg = ParseInitiateTCPClientRep(decrypted);
                     break;
                 }
             case 0x03:
                 {
-                    byte[] decrypted = MessengerClient.Crypto.Decrypt(encryptionKey, payload);
+                    byte[] decrypted = DecryptOrThrow(encryptionKey, payload);
                     parsedMsg = ParseSendData(decrypted);
                     break;
                 }
@@ -234,13 +269,13 @@ public static class MessageParser
                 }
             case 0x05:
                 {
-                    byte[] decrypted = MessengerClient.Crypto.Decrypt(encryptionKey, payload);
+                    byte[] decrypted = DecryptOrThrow(encryptionKey, payload);
                     parsedMsg = ParseInitiateBINDReq(decrypted);
                     break;
                 }
             case 0x06:
                 {
-                    byte[] decrypted = MessengerClient.Crypto.Decrypt(encryptionKey, payload);
+                    byte[] decrypted = DecryptOrThrow(encryptionKey, payload);
                     parsedMsg = ParseInitiateBINDRep(decrypted);
                     break;
                 }

@@ -113,6 +113,11 @@ namespace MessengerClient
                     await client.StartAsync();
                     break;
                 }
+                catch (DecryptionException)
+                {
+                    Console.WriteLine("[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
+                    return;
+                }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[!] Connection failed: {ex.Message}");
@@ -143,6 +148,11 @@ namespace MessengerClient
                     Console.WriteLine("[+] Reconnected");
                     consecutiveFailures = 0;
                     await client.StartAsync();
+                }
+                catch (DecryptionException)
+                {
+                    Console.WriteLine("[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
+                    return;
                 }
                 catch (Exception ex)
                 {

@@ -123,11 +123,19 @@ namespace MessengerClient
                                 });
                             }
                         }
+                        catch (DecryptionException)
+                        {
+                            throw;
+                        }
                         catch (Exception ex)
                         {
                             Console.WriteLine($"[!] Error parsing message: {ex.Message}");
                         }
                     }
+                }
+                catch (DecryptionException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
