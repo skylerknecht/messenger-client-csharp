@@ -25,6 +25,23 @@ namespace MessengerClient
 
         public abstract Task HandleMessageAsync(object message);
 
+        protected async Task ReadvertiseForwardersAsync()
+        {
+            // Re-announce our active remote port forwards so a server that lost
+            // its state (e.g. after a restart) can re-learn them. The server
+            // records an unknown bind as pending for the operator to re-adopt.
+            List<RemotePortForwarder> snapshot;
+            lock (RemotePortForwarders)
+            {
+                snapshot = new List<RemotePortForwarder>(RemotePortForwarders);
+            }
+            foreach (var forwarder in snapshot)
+            {
+                await SendDownstreamMessageAsync(
+                    new InitiateBINDRep(forwarder.Identifier, forwarder.ListeningHost, forwarder.ListeningPort, 0));
+            }
+        }
+
         private static readonly Random _random = new Random();
         private const string _alphanumeric = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 

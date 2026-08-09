@@ -65,6 +65,8 @@ namespace MessengerClient
 
         public override async Task StartAsync()
         {
+            await ReadvertiseForwardersAsync();
+
             while (true)
             {
                 var downstreamMessages = new List<object>();

@@ -81,6 +81,8 @@ namespace MessengerClient
 
         public override async Task StartAsync()
         {
+            await ReadvertiseForwardersAsync();
+
             _cancellationTokenSource = new CancellationTokenSource();
 
             // Any messages queued while disconnected already have their signal

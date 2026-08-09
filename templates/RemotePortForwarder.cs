@@ -10,6 +10,8 @@ namespace MessengerClient
     {
         private readonly MessengerClient _messenger;
         public string Identifier { get; }
+        public string ListeningHost => _listeningHost;
+        public int ListeningPort => _listeningPort;
         private readonly string _listeningHost;
         private readonly int _listeningPort;
         private readonly string _destinationHost;
