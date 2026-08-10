@@ -19,7 +19,6 @@ namespace MessengerClient
 
         private TcpListener _tcpListener;
         private readonly List<string> _clientIds = new List<string>();
-        private bool _stopped = false;   // set on an intentional stop so we don't re-report "gone"
         private bool _gone = false;      // guards against a double "gone" report
 
         public RemotePortForwarder(MessengerClient messenger, string bindId, string listeningHost, int listeningPort, string destinationHost, int destinationPort)
@@ -62,10 +61,7 @@ namespace MessengerClient
                     }
                     finally
                     {
-                        // The accept loop ended. If it wasn't an intentional stop,
-                        // the listener died — report the RPF gone.
-                        if (!_stopped)
-                            await ReportGoneAsync();
+                        await ReportGoneAsync();
                     }
                 });
 
@@ -80,7 +76,6 @@ namespace MessengerClient
 
         public void Stop()
         {
-            _stopped = true;
             try
             {
                 _tcpListener?.Stop();
@@ -104,7 +99,7 @@ namespace MessengerClient
 
         private async Task ReportGoneAsync()
         {
-            if (_stopped || _gone)
+            if (_gone)
                 return;
             _gone = true;
             lock (_messenger.RemotePortForwarders)

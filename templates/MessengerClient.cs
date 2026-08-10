@@ -90,8 +90,9 @@ namespace MessengerClient
 
         public async Task HandleBindAsync(InitiateBINDReq message)
         {
-            // Empty listening host = STOP: tear down the forwarder with this
-            // bind_id (kill its connections, close its listener) and confirm gone.
+            // Empty listening host = STOP: tear down the forwarder immediately.
+            // The accept-loop finally block fires report_gone which sends the
+            // empty-host BindRep to the server.
             if (string.IsNullOrEmpty(message.ListeningHost))
             {
                 RemotePortForwarder existing;
@@ -105,7 +106,6 @@ namespace MessengerClient
                 {
                     existing.Stop();
                     existing.CloseAllClients();
-                    await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, "", 0, 0));
                 }
                 return;
             }
