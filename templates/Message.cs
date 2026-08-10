@@ -26,12 +26,16 @@ public class InitiateTCPClientReq
     public string ClientId { get; }
     public string IpAddress { get; }
     public int Port { get; }
+    public string ListeningHost { get; }
+    public int ListeningPort { get; }
 
-    public InitiateTCPClientReq(string clientId, string ipAddress, int port)
+    public InitiateTCPClientReq(string clientId, string ipAddress, int port, string listeningHost = "", int listeningPort = 0)
     {
         ClientId = clientId;
         IpAddress = ipAddress;
         Port = port;
+        ListeningHost = listeningHost;
+        ListeningPort = listeningPort;
     }
 }
 
@@ -146,9 +150,20 @@ public static class MessageParser
     {
         var (clientId, remainder) = ReadString(value);
         var (ipAddress, remainder2) = ReadString(remainder);
-        var (port, _) = ReadUInt32(remainder2);
+        var (port, remainder3) = ReadUInt32(remainder2);
 
-        return new InitiateTCPClientReq(clientId, ipAddress, (int)port);
+        // Optional listening endpoint appended by a remote port forwarder.
+        string listeningHost = "";
+        uint listeningPort = 0;
+        if (remainder3.Length > 0)
+        {
+            var (lh, remainder4) = ReadString(remainder3);
+            var (lp, _) = ReadUInt32(remainder4);
+            listeningHost = lh;
+            listeningPort = lp;
+        }
+
+        return new InitiateTCPClientReq(clientId, ipAddress, (int)port, listeningHost, (int)listeningPort);
     }
 
     public static InitiateTCPClientRep ParseInitiateTCPClientRep(byte[] value)
@@ -301,7 +316,7 @@ public static class MessageBuilder
                 messageType = 0x01;
                 payload = MessengerClient.Crypto.Encrypt(
                     encryptionKey,
-                    BuildInitiateTCPClientReq(req.ClientId, req.IpAddress, req.Port)
+                    BuildInitiateTCPClientReq(req.ClientId, req.IpAddress, req.Port, req.ListeningHost, req.ListeningPort)
                 );
                 break;
 
@@ -383,13 +398,22 @@ public static class MessageBuilder
         return BuildString(messengerId);
     }
 
-    public static byte[] BuildInitiateTCPClientReq(string clientId, string ipAddress, int port)
+    public static byte[] BuildInitiateTCPClientReq(string clientId, string ipAddress, int port,
+                                                   string listeningHost = "", int listeningPort = 0)
     {
         var part1 = BuildString(clientId);
         var part2 = BuildString(ipAddress);
 
         byte[] part3 = new byte[4];
         WriteUInt32(part3, 0, (uint)port);
+
+        if (!string.IsNullOrEmpty(listeningHost))
+        {
+            var part4 = BuildString(listeningHost);
+            byte[] part5 = new byte[4];
+            WriteUInt32(part5, 0, (uint)listeningPort);
+            return Combine(part1, part2, part3, part4, part5);
+        }
 
         return Combine(part1, part2, part3);
     }

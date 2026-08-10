@@ -27,9 +27,9 @@ namespace MessengerClient
 
         protected async Task ReadvertiseForwardersAsync()
         {
-            // Re-announce our active remote port forwards so a server that lost
-            // its state (e.g. after a restart) can re-learn them. The server
-            // records an unknown bind as pending for the operator to re-adopt.
+            // On every (re)connect, tell the server which RPFs we're actually
+            // listening on (a real-host BindRep each). A server that lost its
+            // state re-learns them as orphans; one that knows them re-confirms.
             List<RemotePortForwarder> snapshot;
             lock (RemotePortForwarders)
             {
@@ -90,20 +90,35 @@ namespace MessengerClient
 
         public async Task HandleBindAsync(InitiateBINDReq message)
         {
-            RemotePortForwarder existing = null;
-            lock (RemotePortForwarders)
+            // Empty listening host = STOP: tear down the forwarder with this
+            // bind_id (kill its connections, close its listener) and confirm gone.
+            if (string.IsNullOrEmpty(message.ListeningHost))
             {
-                existing = RemotePortForwarders.Find(f => f.Identifier == message.BindId);
+                RemotePortForwarder existing;
+                lock (RemotePortForwarders)
+                {
+                    existing = RemotePortForwarders.Find(f => f.Identifier == message.BindId);
+                    if (existing != null)
+                        RemotePortForwarders.Remove(existing);
+                }
                 if (existing != null)
-                    RemotePortForwarders.Remove(existing);
+                {
+                    existing.Stop();
+                    existing.CloseAllClients();
+                    await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, "", 0, 0));
+                }
+                return;
             }
 
-            if (existing != null)
+            // Real listening host = bind request. Idempotent if we already hold it.
+            bool have;
+            lock (RemotePortForwarders)
             {
-                existing.CloseAllClients();
-                existing.Stop();
-                var rep = new InitiateBINDRep(message.BindId, "0.0.0.0", 0, 0);
-                await SendDownstreamMessageAsync(rep);
+                have = RemotePortForwarders.Exists(f => f.Identifier == message.BindId);
+            }
+            if (have)
+            {
+                await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 0));
                 return;
             }
 
@@ -113,21 +128,19 @@ namespace MessengerClient
                 bool success = await forwarder.StartAsync();
                 if (!success)
                 {
-                    var rep = new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1);
-                    await SendDownstreamMessageAsync(rep);
+                    // Bind failed → report GONE (empty host).
+                    await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, "", 0, 1));
                     return;
                 }
                 lock (RemotePortForwarders)
                 {
                     RemotePortForwarders.Add(forwarder);
                 }
-                var successRep = new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 0);
-                await SendDownstreamMessageAsync(successRep);
+                await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 0));
             }
             catch
             {
-                var rep = new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1);
-                await SendDownstreamMessageAsync(rep);
+                await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, "", 0, 1));
             }
         }
 
