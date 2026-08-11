@@ -153,6 +153,8 @@ namespace MessengerClient
 
             while (consecutiveFailures < retryAttempts)
             {
+                consecutiveFailures++;
+                Console.WriteLine($"[*] Attempting to reconnect (attempt {consecutiveFailures}/{retryAttempts})");
                 await Task.Delay(sleepInterval);
 
                 try
@@ -169,7 +171,6 @@ namespace MessengerClient
                 }
                 catch (Exception ex)
                 {
-                    consecutiveFailures++;
                     Console.WriteLine($"[!] Reconnection failed: {ex.Message}");
                 }
             }
