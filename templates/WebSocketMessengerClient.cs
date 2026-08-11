@@ -37,8 +37,12 @@ namespace MessengerClient
 
         public override async Task ConnectAsync()
         {
-            _cancellationTokenSource?.Cancel();
-            _cancellationTokenSource?.Dispose();
+            if (_cancellationTokenSource != null)
+            {
+                try { _cancellationTokenSource.Cancel(); } catch { }
+                _cancellationTokenSource.Dispose();
+                _cancellationTokenSource = null;
+            }
 
             _webSocket?.Dispose();
             _webSocket = new ClientWebSocket();
