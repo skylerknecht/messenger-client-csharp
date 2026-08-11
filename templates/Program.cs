@@ -145,6 +145,9 @@ namespace MessengerClient
                 Console.WriteLine($"[!] Disconnected: {ex.Message}");
             }
 
+            if (client.Killed)
+                return;
+
             if (retryAttempts <= 0)
                 return;
 
@@ -173,6 +176,9 @@ namespace MessengerClient
                 {
                     Console.WriteLine($"[!] Reconnection failed: {ex.Message}");
                 }
+
+                if (client.Killed)
+                    break;
             }
         }
 

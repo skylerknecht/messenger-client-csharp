@@ -67,7 +67,7 @@ namespace MessengerClient
         {
             await ReadvertiseForwardersAsync();
 
-            while (true)
+            while (!Killed)
             {
                 var downstreamMessages = new List<object>();
 
@@ -146,6 +146,10 @@ namespace MessengerClient
                     break;
 
                 case CheckInMessage checkInMessage:
+                    break;
+
+                case CheckOutMessage _:
+                    HandleCheckOut();
                     break;
 
                 default:

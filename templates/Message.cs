@@ -114,6 +114,8 @@ public class InitiateBINDRep
     }
 }
 
+public class CheckOutMessage { }
+
 
 public static class MessageParser
 {
@@ -294,6 +296,9 @@ public static class MessageParser
                     parsedMsg = ParseInitiateBINDRep(decrypted);
                     break;
                 }
+            case 0x07:
+                    parsedMsg = new CheckOutMessage();
+                    break;
             default:
                 throw new ArgumentException($"Unknown message type: 0x{messageType:X}");
         }

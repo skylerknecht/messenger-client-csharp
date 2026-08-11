@@ -105,7 +105,7 @@ namespace MessengerClient
 
             try
             {
-            while (_webSocket.State == WebSocketState.Open)
+            while (_webSocket.State == WebSocketState.Open && !Killed)
             {
                 try
                 {
@@ -143,6 +143,9 @@ namespace MessengerClient
                         {
                             Console.WriteLine($"[!] Error parsing message: {ex.Message}");
                         }
+
+                        if (Killed)
+                            break;
                     }
                 }
                 catch (DecryptionException)
@@ -202,6 +205,10 @@ namespace MessengerClient
 
                 case CheckInMessage checkInMessage:
                     Identifier = checkInMessage.MessengerId;
+                    break;
+
+                case CheckOutMessage _:
+                    HandleCheckOut();
                     break;
 
                 default:

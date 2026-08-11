@@ -14,6 +14,7 @@ namespace MessengerClient
         public string Identifier = string.Empty;
         public ConcurrentDictionary<string, TcpClient> TcpClients = new ConcurrentDictionary<string, TcpClient>();
         public List<RemotePortForwarder> RemotePortForwarders = new List<RemotePortForwarder>();
+        public volatile bool Killed = false;
 
         public Action OnConnected { get; set; }
 
@@ -24,6 +25,31 @@ namespace MessengerClient
         public abstract Task SendDownstreamMessageAsync(object message);
 
         public abstract Task HandleMessageAsync(object message);
+
+        protected void HandleCheckOut()
+        {
+            Console.WriteLine("[!] Kill signal received");
+            List<RemotePortForwarder> snapshot;
+            lock (RemotePortForwarders)
+            {
+                snapshot = new List<RemotePortForwarder>(RemotePortForwarders);
+                RemotePortForwarders.Clear();
+            }
+            foreach (var forwarder in snapshot)
+            {
+                forwarder.Stop();
+                forwarder.CloseAllClients();
+            }
+            foreach (var kvp in TcpClients)
+            {
+                TcpClient client;
+                if (TcpClients.TryRemove(kvp.Key, out client))
+                {
+                    try { client.Close(); } catch { }
+                }
+            }
+            Killed = true;
+        }
 
         protected async Task ReadvertiseForwardersAsync()
         {
