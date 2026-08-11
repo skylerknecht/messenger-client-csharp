@@ -24,16 +24,16 @@ public class CheckInMessage
 public class InitiateTCPClientReq
 {
     public string ClientId { get; }
-    public string IpAddress { get; }
-    public int Port { get; }
+    public string DestinationHost { get; }
+    public int DestinationPort { get; }
     public string ListeningHost { get; }
     public int ListeningPort { get; }
 
-    public InitiateTCPClientReq(string clientId, string ipAddress, int port, string listeningHost = "", int listeningPort = 0)
+    public InitiateTCPClientReq(string clientId, string destinationHost, int destinationPort, string listeningHost = "", int listeningPort = 0)
     {
         ClientId = clientId;
-        IpAddress = ipAddress;
-        Port = port;
+        DestinationHost = destinationHost;
+        DestinationPort = destinationPort;
         ListeningHost = listeningHost;
         ListeningPort = listeningPort;
     }
@@ -149,8 +149,8 @@ public static class MessageParser
     public static InitiateTCPClientReq ParseInitiateTCPClientReq(byte[] value)
     {
         var (clientId, remainder) = ReadString(value);
-        var (ipAddress, remainder2) = ReadString(remainder);
-        var (port, remainder3) = ReadUInt32(remainder2);
+        var (destinationHost, remainder2) = ReadString(remainder);
+        var (destinationPort, remainder3) = ReadUInt32(remainder2);
 
         // Optional listening endpoint appended by a remote port forwarder.
         string listeningHost = "";
@@ -163,7 +163,7 @@ public static class MessageParser
             listeningPort = lp;
         }
 
-        return new InitiateTCPClientReq(clientId, ipAddress, (int)port, listeningHost, (int)listeningPort);
+        return new InitiateTCPClientReq(clientId, destinationHost, (int)destinationPort, listeningHost, (int)listeningPort);
     }
 
     public static InitiateTCPClientRep ParseInitiateTCPClientRep(byte[] value)
@@ -316,7 +316,7 @@ public static class MessageBuilder
                 messageType = 0x01;
                 payload = MessengerClient.Crypto.Encrypt(
                     encryptionKey,
-                    BuildInitiateTCPClientReq(req.ClientId, req.IpAddress, req.Port, req.ListeningHost, req.ListeningPort)
+                    BuildInitiateTCPClientReq(req.ClientId, req.DestinationHost, req.DestinationPort, req.ListeningHost, req.ListeningPort)
                 );
                 break;
 
@@ -398,14 +398,14 @@ public static class MessageBuilder
         return BuildString(messengerId);
     }
 
-    public static byte[] BuildInitiateTCPClientReq(string clientId, string ipAddress, int port,
+    public static byte[] BuildInitiateTCPClientReq(string clientId, string destinationHost, int destinationPort,
                                                    string listeningHost = "", int listeningPort = 0)
     {
         var part1 = BuildString(clientId);
-        var part2 = BuildString(ipAddress);
+        var part2 = BuildString(destinationHost);
 
         byte[] part3 = new byte[4];
-        WriteUInt32(part3, 0, (uint)port);
+        WriteUInt32(part3, 0, (uint)destinationPort);
 
         if (!string.IsNullOrEmpty(listeningHost))
         {

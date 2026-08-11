@@ -109,7 +109,7 @@ namespace MessengerClient
             CloseAllClients();
             try
             {
-                await _messenger.SendDownstreamMessageAsync(new InitiateBINDRep(Identifier, "", 0, 1));
+                await _messenger.SendDownstreamMessageAsync(new InitiateBINDRep(Identifier, _listeningHost, _listeningPort, 1));
             }
             catch
             {

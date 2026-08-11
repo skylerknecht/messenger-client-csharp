@@ -128,8 +128,8 @@ namespace MessengerClient
                 bool success = await forwarder.StartAsync();
                 if (!success)
                 {
-                    // Bind failed → report GONE (empty host).
-                    await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, "", 0, 1));
+                    // Bind failed → report GONE.
+                    await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1));
                     return;
                 }
                 lock (RemotePortForwarders)
@@ -140,7 +140,7 @@ namespace MessengerClient
             }
             catch
             {
-                await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, "", 0, 1));
+                await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1));
             }
         }
 
@@ -149,7 +149,7 @@ namespace MessengerClient
             Socket socket = null;
             try
             {
-                var addresses = await Dns.GetHostAddressesAsync(message.IpAddress);
+                var addresses = await Dns.GetHostAddressesAsync(message.DestinationHost);
                 var target = addresses.First(a => a.AddressFamily == AddressFamily.InterNetwork || a.AddressFamily == AddressFamily.InterNetworkV6);
 
                 socket = new Socket(target.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
@@ -157,7 +157,7 @@ namespace MessengerClient
                 if (socket.AddressFamily == AddressFamily.InterNetworkV6)
                     socket.DualMode = true;
 
-                var connectTask = socket.ConnectAsync(target, message.Port);
+                var connectTask = socket.ConnectAsync(target, message.DestinationPort);
                 if (await Task.WhenAny(connectTask, Task.Delay(5000)) != connectTask)
                     throw new SocketException((int)SocketError.TimedOut);
                 await connectTask;
