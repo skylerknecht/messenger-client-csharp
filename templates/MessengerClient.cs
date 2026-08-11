@@ -61,6 +61,8 @@ namespace MessengerClient
             while (leftover.Length >= 8)
             {
                 var (newLeftover, parsedMessage) = MessageParser.DeserializeMessage(encryptionKey, leftover);
+                if (parsedMessage == null)
+                    break;
                 messages.Add(parsedMessage);
                 leftover = newLeftover;
             }
@@ -191,6 +193,7 @@ namespace MessengerClient
                         reason = 0x03;
                         break;
                     case SocketError.HostUnreachable:
+                    case SocketError.HostNotFound:
                         reason = 0x04;
                         break;
                     case SocketError.ConnectionRefused:

@@ -251,7 +251,7 @@ public static class MessageParser
 
         int payloadLen = (int)(messageLength - 8);
         if (dataAfterLength.Length < payloadLen)
-            throw new ArgumentException("Not enough bytes in data for the payload.");
+            return (rawData, null);
 
         byte[] payload = dataAfterLength.Take(payloadLen).ToArray();
         byte[] leftover = dataAfterLength.Skip(payloadLen).ToArray();
