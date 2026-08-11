@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.WebSockets;
 using System.Threading;
@@ -126,6 +127,12 @@ namespace MessengerClient
                         try
                         {
                             var messages = DeserializeMessages(_encryptionKey, messageData);
+
+                            if (messages.Any(m => m is CheckOutMessage))
+                            {
+                                HandleCheckOut();
+                                break;
+                            }
 
                             foreach (var message in messages)
                             {

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -93,6 +94,12 @@ namespace MessengerClient
 
                 var responseData = await response.Content.ReadAsByteArrayAsync();
                 var messages = DeserializeMessages(_encryptionKey, responseData);
+
+                if (messages.Any(m => m is CheckOutMessage))
+                {
+                    HandleCheckOut();
+                    break;
+                }
 
                 foreach (var msg in messages)
                 {
