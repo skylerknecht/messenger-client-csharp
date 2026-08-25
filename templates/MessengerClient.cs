@@ -124,6 +124,8 @@ namespace MessengerClient
 
         public async Task HandleBindAsync(InitiateBINDReq message)
         {
+            if (Killed) return;
+
             // Empty listening host = STOP: tear down the forwarder immediately.
             // The accept-loop finally block fires report_gone which sends the
             // empty-host BindRep to the server.
