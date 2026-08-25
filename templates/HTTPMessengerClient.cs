@@ -14,7 +14,8 @@ namespace MessengerClient
         private readonly string _uri;
         private readonly HttpClient _httpClient;
         private readonly byte[] _encryptionKey;
-        private readonly ConcurrentQueue<object> _downstreamMessages;
+        private readonly ConcurrentQueue<object> _upstreamMessages;
+        private readonly List<object> _pending = new List<object>();
 
         public HTTPMessengerClient(string uri, byte[] encryptionKey, string userAgent, IWebProxy proxy = null)
         {
@@ -30,13 +31,13 @@ namespace MessengerClient
 
             _httpClient = new HttpClient(handler);
             _httpClient.DefaultRequestHeaders.Add("User-Agent", userAgent);
-            _downstreamMessages = new ConcurrentQueue<object>();
+            _upstreamMessages = new ConcurrentQueue<object>();
         }
 
         public override async Task ConnectAsync()
         {
-            var downstreamMessage = MessageBuilder.SerializeMessage(_encryptionKey, new CheckInMessage(Identifier));
-            HttpContent content = new ByteArrayContent(downstreamMessage);
+            var upstreamMessage = MessageBuilder.SerializeMessage(_encryptionKey, new CheckInMessage(Identifier));
+            HttpContent content = new ByteArrayContent(upstreamMessage);
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
 
             HttpResponseMessage response;
@@ -70,18 +71,20 @@ namespace MessengerClient
 
             while (!Killed)
             {
-                var downstreamMessages = new List<object>();
-
-                downstreamMessages.Add(new CheckInMessage(Identifier));
-
-                int drained = 0;
-                while (drained < 5 && _downstreamMessages.TryDequeue(out var message))
+                if (_pending.Count == 0)
                 {
-                    downstreamMessages.Add(message);
-                    drained++;
+                    int drained = 0;
+                    while (drained < 5 && _upstreamMessages.TryDequeue(out var message))
+                    {
+                        _pending.Add(message);
+                        drained++;
+                    }
                 }
 
-                HttpContent content = new ByteArrayContent(SerializeMessages(_encryptionKey, downstreamMessages));
+                var batch = new List<object> { new CheckInMessage(Identifier) };
+                batch.AddRange(_pending);
+
+                HttpContent content = new ByteArrayContent(SerializeMessages(_encryptionKey, batch));
                 content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
                 HttpResponseMessage response;
                 using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
@@ -89,30 +92,35 @@ namespace MessengerClient
                     response = await _httpClient.PostAsync(_uri, content, cts.Token);
                 }
 
-                if (!response.IsSuccessStatusCode)
-                    throw new HttpRequestException($"Poll failed: HTTP {response.StatusCode}");
-
-                var responseData = await response.Content.ReadAsByteArrayAsync();
-                var messages = DeserializeMessages(_encryptionKey, responseData);
-
-                if (messages.Any(m => m is CheckOutMessage))
+                using (response)
                 {
-                    HandleCheckOut();
-                    break;
-                }
+                    if (!response.IsSuccessStatusCode)
+                        throw new HttpRequestException($"Poll failed: HTTP {response.StatusCode}");
 
-                foreach (var msg in messages)
-                {
-                    _ = Task.Run(() => HandleMessageAsync(msg));
+                    _pending.Clear();
+
+                    var responseData = await response.Content.ReadAsByteArrayAsync();
+                    var messages = DeserializeMessages(_encryptionKey, responseData);
+
+                    if (messages.Any(m => m is CheckOutMessage))
+                    {
+                        HandleCheckOut();
+                        break;
+                    }
+
+                    foreach (var msg in messages)
+                    {
+                        _ = Task.Run(() => HandleMessageAsync(msg));
+                    }
                 }
 
                 await Task.Delay(100);
             }
         }
 
-        public override Task SendDownstreamMessageAsync(object message)
+        public override Task SendUpstreamMessageAsync(object message)
         {
-            _downstreamMessages.Enqueue(message);
+            _upstreamMessages.Enqueue(message);
             return Task.CompletedTask;
         }
 
@@ -139,12 +147,15 @@ namespace MessengerClient
                 case SendDataMessage sendDataMessage:
                     if (sendDataMessage.Data.Length == 0)
                     {
+                        if (TcpWriteQueues.TryRemove(sendDataMessage.ClientId, out var wq))
+                            wq.CompleteAdding();
                         if (TcpClients.TryRemove(sendDataMessage.ClientId, out var closedClient))
                             closedClient.Close();
                     }
-                    else if (TcpClients.TryGetValue(sendDataMessage.ClientId, out var client))
+                    else
                     {
-                        await client.GetStream().WriteAsync(sendDataMessage.Data, 0, sendDataMessage.Data.Length);
+                        if (TcpWriteQueues.TryGetValue(sendDataMessage.ClientId, out var q))
+                            q.Add(sendDataMessage.Data);
                     }
                     break;
 

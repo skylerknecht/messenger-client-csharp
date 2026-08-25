@@ -17,12 +17,7 @@ namespace MessengerClient
         private readonly string _userAgent;
         private readonly IWebProxy _proxy;
         private ClientWebSocket _webSocket;
-        private readonly ConcurrentQueue<object> _downstreamMessages;
-        // Wakes the single send loop the instant something is enqueued — no
-        // polling — while guaranteeing exactly one task ever calls SendAsync.
-        // ClientWebSocket aborts on overlapping sends, so serialization here is
-        // a correctness requirement, not an optimization.
-        private readonly SemaphoreSlim _sendSignal = new SemaphoreSlim(0);
+        private readonly BlockingCollection<object> _upstreamMessages = new BlockingCollection<object>();
         private CancellationTokenSource _cancellationTokenSource;
 
         public WebSocketMessengerClient(string uri, byte[] encryptionKey, string userAgent, IWebProxy proxy = null)
@@ -32,7 +27,6 @@ namespace MessengerClient
             _userAgent = userAgent;
             _proxy = proxy;
             _webSocket = new ClientWebSocket();
-            _downstreamMessages = new ConcurrentQueue<object>();
         }
 
         public override async Task ConnectAsync()
@@ -89,13 +83,6 @@ namespace MessengerClient
             await ReadvertiseForwardersAsync();
 
             _cancellationTokenSource = new CancellationTokenSource();
-
-            // Any messages queued while disconnected already have their signal
-            // permits (Release runs on every enqueue), so the send loop drains
-            // the backlog on its own. Ensure at least one wake in case a
-            // backlog exists but permits were consumed by a prior cancelled loop.
-            if (!_downstreamMessages.IsEmpty)
-                _sendSignal.Release();
 
             var receivingTask = ReceiveMessagesAsync();
             var sendingTask = SendMessagesAsync(_cancellationTokenSource.Token);
@@ -201,12 +188,15 @@ namespace MessengerClient
                 case SendDataMessage sendDataMessage:
                     if (sendDataMessage.Data.Length == 0)
                     {
+                        if (TcpWriteQueues.TryRemove(sendDataMessage.ClientId, out var wq))
+                            wq.CompleteAdding();
                         if (TcpClients.TryRemove(sendDataMessage.ClientId, out var closedClient))
                             closedClient.Close();
                     }
-                    else if (TcpClients.TryGetValue(sendDataMessage.ClientId, out var client))
+                    else
                     {
-                        await client.GetStream().WriteAsync(sendDataMessage.Data, 0, sendDataMessage.Data.Length);
+                        if (TcpWriteQueues.TryGetValue(sendDataMessage.ClientId, out var q))
+                            q.Add(sendDataMessage.Data);
                     }
                     break;
 
@@ -227,12 +217,9 @@ namespace MessengerClient
             }
         }
 
-        public override Task SendDownstreamMessageAsync(object message)
+        public override Task SendUpstreamMessageAsync(object message)
         {
-            // Producer: never touch the socket. Enqueue and wake the send loop.
-            // Serialization is the send loop's job — see _sendSignal.
-            _downstreamMessages.Enqueue(message);
-            _sendSignal.Release();
+            _upstreamMessages.Add(message);
             return Task.CompletedTask;
         }
 
@@ -242,27 +229,20 @@ namespace MessengerClient
             {
                 while (!token.IsCancellationRequested)
                 {
-                    // Park (no CPU) until a message is enqueued or we're cancelled.
-                    await _sendSignal.WaitAsync(token);
-
-                    if (token.IsCancellationRequested || _webSocket.State != WebSocketState.Open)
+                    var first = _upstreamMessages.Take(token);
+                    if (_webSocket.State != WebSocketState.Open)
                         break;
 
-                    // Coalesce everything queued right now into one frame.
-                    var downstreamMessages = new List<object> { new CheckInMessage(Identifier) };
-                    while (_downstreamMessages.TryDequeue(out var msg))
-                        downstreamMessages.Add(msg);
+                    var batch = new List<object> { new CheckInMessage(Identifier), first };
+                    while (_upstreamMessages.TryTake(out var msg))
+                        batch.Add(msg);
 
-                    if (downstreamMessages.Count == 1)
-                        continue; // surplus permit from a batched drain — nothing to send
-
-                    var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, downstreamMessages));
+                    var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, batch));
                     await _webSocket.SendAsync(content, WebSocketMessageType.Binary, true, token);
                 }
             }
             catch (OperationCanceledException)
             {
-                // Cancelled because the connection dropped — expected, just exit.
             }
         }
 

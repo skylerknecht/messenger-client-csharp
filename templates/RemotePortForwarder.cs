@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -89,6 +90,8 @@ namespace MessengerClient
         {
             foreach (var clientId in _clientIds)
             {
+                if (_messenger.TcpWriteQueues.TryRemove(clientId, out var q))
+                    q.CompleteAdding();
                 TcpClient client;
                 if (_messenger.TcpClients.TryRemove(clientId, out client))
                 {
@@ -109,7 +112,7 @@ namespace MessengerClient
             CloseAllClients();
             try
             {
-                await _messenger.SendDownstreamMessageAsync(new InitiateBINDRep(Identifier, _listeningHost, _listeningPort, 1));
+                await _messenger.SendUpstreamMessageAsync(new InitiateBINDRep(Identifier, _listeningHost, _listeningPort, 1));
             }
             catch
             {
@@ -122,8 +125,15 @@ namespace MessengerClient
             _clientIds.Add(clientId);
 
             _messenger.TcpClients[clientId] = client;
+            var writeQueue = new BlockingCollection<byte[]>();
+            _messenger.TcpWriteQueues[clientId] = writeQueue;
+            var tcpStream = client.GetStream();
+            Task.Run(() => {
+                try { foreach (var d in writeQueue.GetConsumingEnumerable()) tcpStream.Write(d, 0, d.Length); }
+                catch {}
+            });
 
-            var downstreamMessage = new InitiateTCPClientReq(
+            var upstreamMessage = new InitiateTCPClientReq(
                 clientId,
                 _destinationHost,
                 _destinationPort,
@@ -131,7 +141,7 @@ namespace MessengerClient
                 _listeningPort
             );
 
-            await _messenger.SendDownstreamMessageAsync(downstreamMessage);
+            await _messenger.SendUpstreamMessageAsync(upstreamMessage);
         }
     }
 }

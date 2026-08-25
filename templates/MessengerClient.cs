@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 
 namespace MessengerClient
@@ -13,6 +14,7 @@ namespace MessengerClient
     {
         public string Identifier = string.Empty;
         public ConcurrentDictionary<string, TcpClient> TcpClients = new ConcurrentDictionary<string, TcpClient>();
+        public ConcurrentDictionary<string, BlockingCollection<byte[]>> TcpWriteQueues = new ConcurrentDictionary<string, BlockingCollection<byte[]>>();
         public List<RemotePortForwarder> RemotePortForwarders = new List<RemotePortForwarder>();
         public volatile bool Killed = false;
 
@@ -22,13 +24,14 @@ namespace MessengerClient
 
         public abstract Task StartAsync();
 
-        public abstract Task SendDownstreamMessageAsync(object message);
+        public abstract Task SendUpstreamMessageAsync(object message);
 
         public abstract Task HandleMessageAsync(object message);
 
         protected void HandleCheckOut()
         {
             Console.WriteLine("[!] Kill signal received");
+            Killed = true;
             List<RemotePortForwarder> snapshot;
             lock (RemotePortForwarders)
             {
@@ -42,13 +45,14 @@ namespace MessengerClient
             }
             foreach (var kvp in TcpClients)
             {
+                if (TcpWriteQueues.TryRemove(kvp.Key, out var q))
+                    q.CompleteAdding();
                 TcpClient client;
                 if (TcpClients.TryRemove(kvp.Key, out client))
                 {
                     try { client.Close(); } catch { }
                 }
             }
-            Killed = true;
         }
 
         protected async Task ReadvertiseForwardersAsync()
@@ -63,19 +67,21 @@ namespace MessengerClient
             }
             foreach (var forwarder in snapshot)
             {
-                await SendDownstreamMessageAsync(
+                await SendUpstreamMessageAsync(
                     new InitiateBINDRep(forwarder.Identifier, forwarder.ListeningHost, forwarder.ListeningPort, 0));
             }
         }
 
-        private static readonly Random _random = new Random();
         private const string _alphanumeric = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
         public static string AlphanumericIdentifier(int length = 10)
         {
+            var bytes = new byte[length];
+            using (var rng = new RNGCryptoServiceProvider())
+                rng.GetBytes(bytes);
             var chars = new char[length];
             for (int i = 0; i < length; i++)
-                chars[i] = _alphanumeric[_random.Next(_alphanumeric.Length)];
+                chars[i] = _alphanumeric[bytes[i] % _alphanumeric.Length];
             return new string(chars);
         }
 
@@ -146,7 +152,7 @@ namespace MessengerClient
             }
             if (have)
             {
-                await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 0));
+                await SendUpstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 0));
                 return;
             }
 
@@ -157,23 +163,24 @@ namespace MessengerClient
                 if (!success)
                 {
                     // Bind failed → report GONE.
-                    await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1));
+                    await SendUpstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1));
                     return;
                 }
                 lock (RemotePortForwarders)
                 {
                     RemotePortForwarders.Add(forwarder);
                 }
-                await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 0));
+                await SendUpstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 0));
             }
             catch
             {
-                await SendDownstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1));
+                await SendUpstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1));
             }
         }
 
         public async Task HandleInitiateTCPClientReqAsync(InitiateTCPClientReq message)
         {
+            if (Killed) return;
             Socket socket = null;
             try
             {
@@ -193,6 +200,13 @@ namespace MessengerClient
                 var client = new TcpClient { Client = socket };
                 socket = null;
                 TcpClients[message.ClientId] = client;
+                var writeQueue = new BlockingCollection<byte[]>();
+                TcpWriteQueues[message.ClientId] = writeQueue;
+                var tcpStream = client.GetStream();
+                Task.Run(() => {
+                    try { foreach (var d in writeQueue.GetConsumingEnumerable()) tcpStream.Write(d, 0, d.Length); }
+                    catch {}
+                });
 
                 var localEndPoint = (IPEndPoint)client.Client.LocalEndPoint;
                 var remoteEndPoint = (IPEndPoint)client.Client.RemoteEndPoint;
@@ -207,7 +221,7 @@ namespace MessengerClient
                     remoteAddr, remotePort
                 );
 
-                await SendDownstreamMessageAsync(repObj);
+                await SendUpstreamMessageAsync(repObj);
                 await StreamAsync(message.ClientId);
             }
             catch (SocketException ex)
@@ -244,7 +258,7 @@ namespace MessengerClient
                     "0.0.0.0", 0
                 );
 
-                await SendDownstreamMessageAsync(repObj);
+                await SendUpstreamMessageAsync(repObj);
             }
             catch (ArgumentException)
             {
@@ -253,7 +267,7 @@ namespace MessengerClient
                     "0.0.0.0", 0
                 );
 
-                await SendDownstreamMessageAsync(repObj);
+                await SendUpstreamMessageAsync(repObj);
             }
             catch (Exception ex)
             {
@@ -263,7 +277,7 @@ namespace MessengerClient
                     "0.0.0.0", 0
                 );
 
-                await SendDownstreamMessageAsync(repObj);
+                await SendUpstreamMessageAsync(repObj);
             }
             finally
             {
@@ -290,7 +304,7 @@ namespace MessengerClient
                     Array.Copy(buffer, 0, dataToSend, 0, bytesRead);
 
                     var sdmObj = new SendDataMessage(clientId, dataToSend);
-                    await SendDownstreamMessageAsync(sdmObj);
+                    await SendUpstreamMessageAsync(sdmObj);
                 }
             }
             catch
@@ -299,11 +313,16 @@ namespace MessengerClient
             finally
             {
                 stream?.Dispose();
+                if (TcpWriteQueues.TryRemove(clientId, out var wq))
+                    wq.CompleteAdding();
                 if (TcpClients.TryRemove(clientId, out var removed))
                 {
                     removed.Close();
-                    var closeObj = new SendDataMessage(clientId, Array.Empty<byte>());
-                    await SendDownstreamMessageAsync(closeObj);
+                    if (!Killed)
+                    {
+                        var closeObj = new SendDataMessage(clientId, Array.Empty<byte>());
+                        await SendUpstreamMessageAsync(closeObj);
+                    }
                 }
             }
         }
