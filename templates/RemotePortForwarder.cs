@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
@@ -19,8 +17,6 @@ namespace MessengerClient
         private readonly int _destinationPort;
 
         private TcpListener _tcpListener;
-        private readonly List<string> _clientIds = new List<string>();
-        private bool _gone = false;      // guards against a double "gone" report
 
         public RemotePortForwarder(MessengerClient messenger, string bindId, string listeningHost, int listeningPort, string destinationHost, int destinationPort)
         {
@@ -40,38 +36,58 @@ namespace MessengerClient
                 _tcpListener = new TcpListener(addresses[0], _listeningPort);
                 _tcpListener.Start();
                 Console.WriteLine($"[+] Remote Port Forwarder listening on {_listeningHost}:{_listeningPort}");
-
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        while (true)
-                        {
-                            var client = await _tcpListener.AcceptTcpClientAsync();
-                            _ = HandleClientAsync(client);
-                        }
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                    }
-                    catch (SocketException)
-                    {
-                    }
-                    catch
-                    {
-                    }
-                    finally
-                    {
-                        await ReportGoneAsync();
-                    }
-                });
-
-                return true;
             }
             catch (SocketException ex)
             {
                 Console.WriteLine($"[!] {_listeningHost}:{_listeningPort} is already in use or encountered an error: {ex.Message}");
                 return false;
+            }
+
+            if (_messenger.Killed)
+            {
+                try { _tcpListener.Stop(); } catch { }
+                return false;
+            }
+
+            _messenger.RemotePortForwarders.TryAdd(Identifier, this);
+            _ = Task.Run(() => AcceptLoopAsync());
+            return true;
+        }
+
+        private async Task AcceptLoopAsync()
+        {
+            try
+            {
+                while (true)
+                {
+                    var client = await _tcpListener.AcceptTcpClientAsync();
+                    _ = HandleClientAsync(client);
+                }
+            }
+            catch (ObjectDisposedException) { }
+            catch (SocketException) { }
+            catch { }
+            finally
+            {
+                await CleanupAsync();
+            }
+        }
+
+        private async Task CleanupAsync()
+        {
+            RemotePortForwarder removed;
+            if (!_messenger.RemotePortForwarders.TryRemove(Identifier, out removed))
+                return;
+
+            _messenger.CloseConnectionsForBind(Identifier);
+
+            if (!_messenger.Killed)
+            {
+                try
+                {
+                    await _messenger.SendUpstreamMessageAsync(new InitiateBINDRep(Identifier, _listeningHost, _listeningPort, 1));
+                }
+                catch { }
             }
         }
 
@@ -81,57 +97,28 @@ namespace MessengerClient
             {
                 _tcpListener?.Stop();
             }
-            catch
-            {
-            }
-        }
-
-        public void CloseAllClients()
-        {
-            foreach (var clientId in _clientIds)
-            {
-                if (_messenger.TcpWriteQueues.TryRemove(clientId, out var q))
-                    q.CompleteAdding();
-                TcpClient client;
-                if (_messenger.TcpClients.TryRemove(clientId, out client))
-                {
-                    try { client.Close(); } catch { }
-                }
-            }
-        }
-
-        private async Task ReportGoneAsync()
-        {
-            if (_gone)
-                return;
-            _gone = true;
-            lock (_messenger.RemotePortForwarders)
-            {
-                _messenger.RemotePortForwarders.Remove(this);
-            }
-            CloseAllClients();
-            try
-            {
-                await _messenger.SendUpstreamMessageAsync(new InitiateBINDRep(Identifier, _listeningHost, _listeningPort, 1));
-            }
-            catch
-            {
-            }
+            catch { }
         }
 
         private async Task HandleClientAsync(TcpClient client)
         {
-            var clientId = MessengerClient.AlphanumericIdentifier();
-            _clientIds.Add(clientId);
+            if (_messenger.Killed || !_messenger.RemotePortForwarders.ContainsKey(Identifier))
+            {
+                try { client.Close(); } catch { }
+                return;
+            }
 
-            _messenger.TcpClients[clientId] = client;
-            var writeQueue = new BlockingCollection<byte[]>();
-            _messenger.TcpWriteQueues[clientId] = writeQueue;
-            var tcpStream = client.GetStream();
-            Task.Run(() => {
-                try { foreach (var d in writeQueue.GetConsumingEnumerable()) tcpStream.Write(d, 0, d.Length); }
-                catch {}
-            });
+            var clientId = MessengerClient.AlphanumericIdentifier();
+
+            var connection = _messenger.RegisterTcpClient(clientId, client, bindId: Identifier);
+            if (connection == null)
+                return;
+
+            if (!_messenger.RemotePortForwarders.ContainsKey(Identifier))
+            {
+                connection.Abort();
+                return;
+            }
 
             var upstreamMessage = new InitiateTCPClientReq(
                 clientId,

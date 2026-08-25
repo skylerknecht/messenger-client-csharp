@@ -13,9 +13,8 @@ namespace MessengerClient
     public abstract class MessengerClient
     {
         public string Identifier = string.Empty;
-        public ConcurrentDictionary<string, TcpClient> TcpClients = new ConcurrentDictionary<string, TcpClient>();
-        public ConcurrentDictionary<string, BlockingCollection<byte[]>> TcpWriteQueues = new ConcurrentDictionary<string, BlockingCollection<byte[]>>();
-        public List<RemotePortForwarder> RemotePortForwarders = new List<RemotePortForwarder>();
+        public ConcurrentDictionary<string, TcpConnection> TcpClients = new ConcurrentDictionary<string, TcpConnection>();
+        public ConcurrentDictionary<string, RemotePortForwarder> RemotePortForwarders = new ConcurrentDictionary<string, RemotePortForwarder>();
         public volatile bool Killed = false;
 
         public Action OnConnected { get; set; }
@@ -26,46 +25,99 @@ namespace MessengerClient
 
         public abstract Task SendUpstreamMessageAsync(object message);
 
-        public abstract Task HandleMessageAsync(object message);
+        public TcpConnection RegisterTcpClient(string clientId, TcpClient rawClient, string bindId = null)
+        {
+            if (Killed)
+            {
+                try { rawClient.Close(); } catch { }
+                return null;
+            }
 
-        protected void HandleCheckOut()
+            var connection = new TcpConnection(this, clientId, rawClient, bindId);
+            if (!TcpClients.TryAdd(clientId, connection))
+            {
+                try { rawClient.Close(); } catch { }
+                return null;
+            }
+
+            if (Killed)
+            {
+                connection.Abort();
+                return null;
+            }
+
+            Task.Run(() => connection.WriteLoop());
+            return connection;
+        }
+
+        public void CloseConnectionsForBind(string bindId)
+        {
+            foreach (var connection in TcpClients.Values.ToArray())
+            {
+                if (connection.BindId == bindId)
+                    connection.Abort();
+            }
+        }
+
+        public void DispatchMessage(object message)
+        {
+            switch (message)
+            {
+                case InitiateTCPClientReq reqMessage:
+                    _ = Task.Run(async () => await HandleInitiateTCPClientReqAsync(reqMessage));
+                    break;
+
+                case InitiateTCPClientRep repMessage:
+                    TcpConnection repConnection;
+                    if (!TcpClients.TryGetValue(repMessage.ClientId, out repConnection))
+                        break;
+                    if (repMessage.Reason != 0)
+                    {
+                        repConnection.Abort();
+                        break;
+                    }
+                    _ = repConnection.StreamAsync();
+                    break;
+
+                case SendDataMessage sendDataMessage:
+                    TcpConnection sdmConnection;
+                    if (!TcpClients.TryGetValue(sendDataMessage.ClientId, out sdmConnection))
+                        break;
+                    sdmConnection.SendData(sendDataMessage.Data);
+                    break;
+
+                case InitiateBINDReq bindReqMessage:
+                    _ = Task.Run(async () => await HandleBindAsync(bindReqMessage));
+                    break;
+
+                case CheckInMessage checkInMessage:
+                    Identifier = checkInMessage.MessengerId;
+                    break;
+
+                case CheckOutMessage _:
+                    HandleCheckout();
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        protected void HandleCheckout()
         {
             Console.WriteLine("[!] Kill signal received");
             Killed = true;
-            List<RemotePortForwarder> snapshot;
-            lock (RemotePortForwarders)
-            {
-                snapshot = new List<RemotePortForwarder>(RemotePortForwarders);
-                RemotePortForwarders.Clear();
-            }
-            foreach (var forwarder in snapshot)
-            {
+
+            foreach (var forwarder in RemotePortForwarders.Values.ToArray())
                 forwarder.Stop();
-                forwarder.CloseAllClients();
-            }
-            foreach (var kvp in TcpClients)
-            {
-                if (TcpWriteQueues.TryRemove(kvp.Key, out var q))
-                    q.CompleteAdding();
-                TcpClient client;
-                if (TcpClients.TryRemove(kvp.Key, out client))
-                {
-                    try { client.Close(); } catch { }
-                }
-            }
+
+            foreach (var connection in TcpClients.Values.ToArray())
+                connection.Abort();
         }
 
         protected async Task ReadvertiseForwardersAsync()
         {
-            // On every (re)connect, tell the server which RPFs we're actually
-            // listening on (a real-host BindRep each). A server that lost its
-            // state re-learns them as orphans; one that knows them re-confirms.
-            List<RemotePortForwarder> snapshot;
-            lock (RemotePortForwarders)
-            {
-                snapshot = new List<RemotePortForwarder>(RemotePortForwarders);
-            }
-            foreach (var forwarder in snapshot)
+            foreach (var forwarder in RemotePortForwarders.Values.ToArray())
             {
                 await SendUpstreamMessageAsync(
                     new InitiateBINDRep(forwarder.Identifier, forwarder.ListeningHost, forwarder.ListeningPort, 0));
@@ -126,33 +178,15 @@ namespace MessengerClient
         {
             if (Killed) return;
 
-            // Empty listening host = STOP: tear down the forwarder immediately.
-            // The accept-loop finally block fires report_gone which sends the
-            // empty-host BindRep to the server.
             if (string.IsNullOrEmpty(message.ListeningHost))
             {
                 RemotePortForwarder existing;
-                lock (RemotePortForwarders)
-                {
-                    existing = RemotePortForwarders.Find(f => f.Identifier == message.BindId);
-                    if (existing != null)
-                        RemotePortForwarders.Remove(existing);
-                }
-                if (existing != null)
-                {
+                if (RemotePortForwarders.TryGetValue(message.BindId, out existing))
                     existing.Stop();
-                    existing.CloseAllClients();
-                }
                 return;
             }
 
-            // Real listening host = bind request. Idempotent if we already hold it.
-            bool have;
-            lock (RemotePortForwarders)
-            {
-                have = RemotePortForwarders.Exists(f => f.Identifier == message.BindId);
-            }
-            if (have)
+            if (RemotePortForwarders.ContainsKey(message.BindId))
             {
                 await SendUpstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 0));
                 return;
@@ -164,19 +198,23 @@ namespace MessengerClient
                 bool success = await forwarder.StartAsync();
                 if (!success)
                 {
-                    // Bind failed → report GONE.
-                    await SendUpstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1));
+                    if (!Killed)
+                        await SendUpstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1));
                     return;
                 }
-                lock (RemotePortForwarders)
+
+                if (Killed)
                 {
-                    RemotePortForwarders.Add(forwarder);
+                    forwarder.Stop();
+                    return;
                 }
+
                 await SendUpstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 0));
             }
             catch
             {
-                await SendUpstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1));
+                if (!Killed)
+                    await SendUpstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1));
             }
         }
 
@@ -184,6 +222,7 @@ namespace MessengerClient
         {
             if (Killed) return;
             Socket socket = null;
+            TcpConnection connection = null;
             try
             {
                 var addresses = await Dns.GetHostAddressesAsync(message.DestinationHost);
@@ -199,16 +238,27 @@ namespace MessengerClient
                     throw new SocketException((int)SocketError.TimedOut);
                 await connectTask;
 
+                if (Killed)
+                {
+                    socket.Dispose();
+                    socket = null;
+                    return;
+                }
+
                 var client = new TcpClient { Client = socket };
+                connection = RegisterTcpClient(message.ClientId, client);
+                if (connection == null)
+                {
+                    socket = null;
+                    if (!Killed)
+                    {
+                        await SendUpstreamMessageAsync(new InitiateTCPClientRep(
+                            message.ClientId, "0.0.0.0", 0, 1, 0x01,
+                            "0.0.0.0", 0));
+                    }
+                    return;
+                }
                 socket = null;
-                TcpClients[message.ClientId] = client;
-                var writeQueue = new BlockingCollection<byte[]>();
-                TcpWriteQueues[message.ClientId] = writeQueue;
-                var tcpStream = client.GetStream();
-                Task.Run(() => {
-                    try { foreach (var d in writeQueue.GetConsumingEnumerable()) tcpStream.Write(d, 0, d.Length); }
-                    catch {}
-                });
 
                 var localEndPoint = (IPEndPoint)client.Client.LocalEndPoint;
                 var remoteEndPoint = (IPEndPoint)client.Client.RemoteEndPoint;
@@ -224,108 +274,68 @@ namespace MessengerClient
                 );
 
                 await SendUpstreamMessageAsync(repObj);
-                await StreamAsync(message.ClientId);
+                await connection.StreamAsync();
             }
             catch (SocketException ex)
             {
-                byte reason;
-                switch (ex.SocketErrorCode)
+                if (!Killed)
                 {
-                    case SocketError.NetworkUnreachable:
-                        reason = 0x03;
-                        break;
-                    case SocketError.HostUnreachable:
-                    case SocketError.HostNotFound:
-                        reason = 0x04;
-                        break;
-                    case SocketError.ConnectionRefused:
-                        reason = 0x05;
-                        break;
-                    case SocketError.TimedOut:
-                        reason = 0x06;
-                        break;
-                    case SocketError.ProtocolNotSupported:
-                        reason = 0x07;
-                        break;
-                    case SocketError.AddressFamilyNotSupported:
-                        reason = 0x08;
-                        break;
-                    default:
-                        reason = 0x01;
-                        break;
+                    byte reason;
+                    switch (ex.SocketErrorCode)
+                    {
+                        case SocketError.NetworkUnreachable:
+                            reason = 0x03;
+                            break;
+                        case SocketError.HostUnreachable:
+                        case SocketError.HostNotFound:
+                            reason = 0x04;
+                            break;
+                        case SocketError.ConnectionRefused:
+                            reason = 0x05;
+                            break;
+                        case SocketError.TimedOut:
+                            reason = 0x06;
+                            break;
+                        case SocketError.ProtocolNotSupported:
+                            reason = 0x07;
+                            break;
+                        case SocketError.AddressFamilyNotSupported:
+                            reason = 0x08;
+                            break;
+                        default:
+                            reason = 0x01;
+                            break;
+                    }
+
+                    await SendUpstreamMessageAsync(new InitiateTCPClientRep(
+                        message.ClientId, "0.0.0.0", 0, 1, reason,
+                        "0.0.0.0", 0));
                 }
-
-                var repObj = new InitiateTCPClientRep(
-                    message.ClientId, "0.0.0.0", 0, 1, reason,
-                    "0.0.0.0", 0
-                );
-
-                await SendUpstreamMessageAsync(repObj);
             }
             catch (ArgumentException)
             {
-                var repObj = new InitiateTCPClientRep(
-                    message.ClientId, "0.0.0.0", 0, 1, 0x04,
-                    "0.0.0.0", 0
-                );
-
-                await SendUpstreamMessageAsync(repObj);
+                if (!Killed)
+                {
+                    await SendUpstreamMessageAsync(new InitiateTCPClientRep(
+                        message.ClientId, "0.0.0.0", 0, 1, 0x04,
+                        "0.0.0.0", 0));
+                }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[!] Unhandled error: {ex}");
-                var repObj = new InitiateTCPClientRep(
-                    message.ClientId, "0.0.0.0", 0, 1, 0x01,
-                    "0.0.0.0", 0
-                );
-
-                await SendUpstreamMessageAsync(repObj);
+                if (!Killed)
+                {
+                    await SendUpstreamMessageAsync(new InitiateTCPClientRep(
+                        message.ClientId, "0.0.0.0", 0, 1, 0x01,
+                        "0.0.0.0", 0));
+                }
             }
             finally
             {
+                if (connection != null)
+                    connection.Abort();
                 socket?.Dispose();
-            }
-        }
-
-        protected async Task StreamAsync(string clientId)
-        {
-            if (!TcpClients.TryGetValue(clientId, out TcpClient client))
-                return;
-
-            NetworkStream stream = null;
-
-            try
-            {
-                stream = client.GetStream();
-                var buffer = new byte[4096];
-                int bytesRead;
-
-                while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
-                {
-                    var dataToSend = new byte[bytesRead];
-                    Array.Copy(buffer, 0, dataToSend, 0, bytesRead);
-
-                    var sdmObj = new SendDataMessage(clientId, dataToSend);
-                    await SendUpstreamMessageAsync(sdmObj);
-                }
-            }
-            catch
-            {
-            }
-            finally
-            {
-                stream?.Dispose();
-                if (TcpWriteQueues.TryRemove(clientId, out var wq))
-                    wq.CompleteAdding();
-                if (TcpClients.TryRemove(clientId, out var removed))
-                {
-                    removed.Close();
-                    if (!Killed)
-                    {
-                        var closeObj = new SendDataMessage(clientId, Array.Empty<byte>());
-                        await SendUpstreamMessageAsync(closeObj);
-                    }
-                }
             }
         }
     }

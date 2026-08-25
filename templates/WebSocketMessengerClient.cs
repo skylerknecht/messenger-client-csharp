@@ -121,16 +121,13 @@ namespace MessengerClient
 
                             if (messages.Any(m => m is CheckOutMessage))
                             {
-                                HandleCheckOut();
+                                HandleCheckout();
                                 break;
                             }
 
                             foreach (var message in messages)
                             {
-                                _ = Task.Run(async () =>
-                                {
-                                    await HandleMessageAsync(message);
-                                });
+                                DispatchMessage(message);
                             }
                         }
                         catch (DecryptionException)
@@ -159,61 +156,7 @@ namespace MessengerClient
             }
             finally
             {
-                // Wake the signal-driven send loop so it observes the dropped
-                // connection and exits; otherwise Task.WhenAll would hang on it.
                 try { _cancellationTokenSource.Cancel(); } catch { }
-            }
-        }
-
-        public override async Task HandleMessageAsync(object message)
-        {
-            switch (message)
-            {
-                case InitiateTCPClientReq reqMessage:
-                    await HandleInitiateTCPClientReqAsync(reqMessage);
-                    break;
-
-                case InitiateTCPClientRep repMessage:
-                    if (!TcpClients.TryGetValue(repMessage.ClientId, out var repClient))
-                        break;
-                    if (repMessage.Reason != 0)
-                    {
-                        if (TcpClients.TryRemove(repMessage.ClientId, out var denied))
-                            denied.Close();
-                        break;
-                    }
-                    await StreamAsync(repMessage.ClientId);
-                    break;
-
-                case SendDataMessage sendDataMessage:
-                    if (sendDataMessage.Data.Length == 0)
-                    {
-                        if (TcpWriteQueues.TryRemove(sendDataMessage.ClientId, out var wq))
-                            wq.CompleteAdding();
-                        if (TcpClients.TryRemove(sendDataMessage.ClientId, out var closedClient))
-                            closedClient.Close();
-                    }
-                    else
-                    {
-                        if (TcpWriteQueues.TryGetValue(sendDataMessage.ClientId, out var q))
-                            q.Add(sendDataMessage.Data);
-                    }
-                    break;
-
-                case InitiateBINDReq bindReqMessage:
-                    await HandleBindAsync(bindReqMessage);
-                    break;
-
-                case CheckInMessage checkInMessage:
-                    Identifier = checkInMessage.MessengerId;
-                    break;
-
-                case CheckOutMessage _:
-                    HandleCheckOut();
-                    break;
-
-                default:
-                    break;
             }
         }
 

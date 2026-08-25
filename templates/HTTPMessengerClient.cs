@@ -104,13 +104,13 @@ namespace MessengerClient
 
                     if (messages.Any(m => m is CheckOutMessage))
                     {
-                        HandleCheckOut();
+                        HandleCheckout();
                         break;
                     }
 
                     foreach (var msg in messages)
                     {
-                        _ = Task.Run(() => HandleMessageAsync(msg));
+                        DispatchMessage(msg);
                     }
                 }
 
@@ -122,57 +122,6 @@ namespace MessengerClient
         {
             _upstreamMessages.Enqueue(message);
             return Task.CompletedTask;
-        }
-
-        public override async Task HandleMessageAsync(object message)
-        {
-            switch (message)
-            {
-                case InitiateTCPClientReq reqMessage:
-                    await HandleInitiateTCPClientReqAsync(reqMessage);
-                    break;
-
-                case InitiateTCPClientRep repMessage:
-                    if (!TcpClients.TryGetValue(repMessage.ClientId, out var repClient))
-                        break;
-                    if (repMessage.Reason != 0)
-                    {
-                        if (TcpClients.TryRemove(repMessage.ClientId, out var denied))
-                            denied.Close();
-                        break;
-                    }
-                    await StreamAsync(repMessage.ClientId);
-                    break;
-
-                case SendDataMessage sendDataMessage:
-                    if (sendDataMessage.Data.Length == 0)
-                    {
-                        if (TcpWriteQueues.TryRemove(sendDataMessage.ClientId, out var wq))
-                            wq.CompleteAdding();
-                        if (TcpClients.TryRemove(sendDataMessage.ClientId, out var closedClient))
-                            closedClient.Close();
-                    }
-                    else
-                    {
-                        if (TcpWriteQueues.TryGetValue(sendDataMessage.ClientId, out var q))
-                            q.Add(sendDataMessage.Data);
-                    }
-                    break;
-
-                case InitiateBINDReq bindReqMessage:
-                    await HandleBindAsync(bindReqMessage);
-                    break;
-
-                case CheckInMessage checkInMessage:
-                    break;
-
-                case CheckOutMessage _:
-                    HandleCheckOut();
-                    break;
-
-                default:
-                    break;
-            }
         }
     }
 }
