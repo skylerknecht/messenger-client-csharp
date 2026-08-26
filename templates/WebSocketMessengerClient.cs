@@ -189,6 +189,13 @@ namespace MessengerClient
             }
         }
 
+        public override void CloseTransport()
+        {
+            try { _cancellationTokenSource?.Cancel(); } catch { }
+            try { _cancellationTokenSource?.Dispose(); } catch { }
+            try { _webSocket?.Dispose(); } catch { }
+        }
+
         public async Task CloseAsync()
         {
             if (_webSocket.State == WebSocketState.Open)

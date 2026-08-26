@@ -25,6 +25,19 @@ namespace MessengerClient
 
         public abstract Task SendUpstreamMessageAsync(object message);
 
+        public abstract void CloseTransport();
+
+        public void Cleanup()
+        {
+            foreach (var forwarder in RemotePortForwarders.Values.ToArray())
+                forwarder.Stop();
+
+            foreach (var connection in TcpClients.Values.ToArray())
+                connection.Abort();
+
+            CloseTransport();
+        }
+
         public TcpConnection RegisterTcpClient(string clientId, TcpClient rawClient, string bindId = null)
         {
             if (Killed)

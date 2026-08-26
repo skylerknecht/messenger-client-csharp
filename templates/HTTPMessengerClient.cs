@@ -123,5 +123,10 @@ namespace MessengerClient
             _upstreamMessages.Enqueue(message);
             return Task.CompletedTask;
         }
+
+        public override void CloseTransport()
+        {
+            try { _httpClient?.Dispose(); } catch { }
+        }
     }
 }

@@ -133,38 +133,8 @@ namespace MessengerClient
 
             try
             {
-                await client.StartAsync();
-            }
-            catch (DecryptionException)
-            {
-                Console.WriteLine("[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
-                return;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[!] Disconnected: {ex.Message}");
-            }
-
-            if (client.Killed)
-                return;
-
-            if (retryAttempts <= 0)
-                return;
-
-            int sleepInterval = (int)((retryDuration / retryAttempts) * 1000);
-            int consecutiveFailures = 0;
-
-            while (consecutiveFailures < retryAttempts)
-            {
-                consecutiveFailures++;
-                Console.WriteLine($"[*] Attempting to reconnect (attempt {consecutiveFailures}/{retryAttempts})");
-                await Task.Delay(sleepInterval);
-
                 try
                 {
-                    await client.ConnectAsync();
-                    Console.WriteLine("[+] Reconnected");
-                    consecutiveFailures = 0;
                     await client.StartAsync();
                 }
                 catch (DecryptionException)
@@ -174,11 +144,48 @@ namespace MessengerClient
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[!] Reconnection failed: {ex.Message}");
+                    Console.WriteLine($"[!] Disconnected: {ex.Message}");
                 }
 
                 if (client.Killed)
-                    break;
+                    return;
+
+                if (retryAttempts <= 0)
+                    return;
+
+                int sleepInterval = (int)((retryDuration / retryAttempts) * 1000);
+                int consecutiveFailures = 0;
+
+                while (consecutiveFailures < retryAttempts)
+                {
+                    consecutiveFailures++;
+                    Console.WriteLine($"[*] Attempting to reconnect (attempt {consecutiveFailures}/{retryAttempts})");
+                    await Task.Delay(sleepInterval);
+
+                    try
+                    {
+                        await client.ConnectAsync();
+                        Console.WriteLine("[+] Reconnected");
+                        consecutiveFailures = 0;
+                        await client.StartAsync();
+                    }
+                    catch (DecryptionException)
+                    {
+                        Console.WriteLine("[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[!] Reconnection failed: {ex.Message}");
+                    }
+
+                    if (client.Killed)
+                        break;
+                }
+            }
+            finally
+            {
+                client.Cleanup();
             }
         }
 
