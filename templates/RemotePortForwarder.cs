@@ -17,7 +17,6 @@ namespace MessengerClient
         private readonly int _destinationPort;
 
         private TcpListener _tcpListener;
-
         public RemotePortForwarder(MessengerClient messenger, string bindId, string listeningHost, int listeningPort, string destinationHost, int destinationPort)
         {
             _messenger = messenger;
@@ -28,7 +27,7 @@ namespace MessengerClient
             _destinationPort = destinationPort;
         }
 
-        public async Task<bool> StartAsync()
+        public async Task<int> StartAsync()
         {
             try
             {
@@ -40,18 +39,20 @@ namespace MessengerClient
             catch (SocketException ex)
             {
                 Console.WriteLine($"[!] {_listeningHost}:{_listeningPort} is already in use or encountered an error: {ex.Message}");
-                return false;
+                if (ex.SocketErrorCode == SocketError.AddressAlreadyInUse) return 2;
+                if (ex.SocketErrorCode == SocketError.AccessDenied) return 3;
+                return 1;
             }
 
             if (_messenger.Killed)
             {
                 try { _tcpListener.Stop(); } catch { }
-                return false;
+                return 1;
             }
 
             _messenger.RemotePortForwarders.TryAdd(Identifier, this);
             _ = Task.Run(() => AcceptLoopAsync());
-            return true;
+            return 0;
         }
 
         private async Task AcceptLoopAsync()
@@ -85,7 +86,7 @@ namespace MessengerClient
             {
                 try
                 {
-                    await _messenger.SendUpstreamMessageAsync(new InitiateBINDRep(Identifier, _listeningHost, _listeningPort, 1));
+                    await _messenger.SendUpstreamMessageAsync(new InitiateBINDRep(Identifier, _listeningHost, _listeningPort, 5));
                 }
                 catch { }
             }

@@ -208,11 +208,11 @@ namespace MessengerClient
             try
             {
                 var forwarder = new RemotePortForwarder(this, message.BindId, message.ListeningHost, message.ListeningPort, message.DestinationHost, message.DestinationPort);
-                bool success = await forwarder.StartAsync();
-                if (!success)
+                int reason = await forwarder.StartAsync();
+                if (reason != 0)
                 {
                     if (!Killed)
-                        await SendUpstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, 1));
+                        await SendUpstreamMessageAsync(new InitiateBINDRep(message.BindId, message.ListeningHost, message.ListeningPort, reason));
                     return;
                 }
 

@@ -166,22 +166,38 @@ namespace MessengerClient
             return Task.CompletedTask;
         }
 
+        private void RequeueFirst(object message)
+        {
+            var remaining = new List<object> { message };
+            while (_upstreamMessages.TryTake(out var m))
+                remaining.Add(m);
+            foreach (var m in remaining)
+                _upstreamMessages.Add(m);
+        }
+
         private async Task SendMessagesAsync(CancellationToken token)
         {
             try
             {
                 while (!token.IsCancellationRequested)
                 {
-                    var first = _upstreamMessages.Take(token);
-                    if (_webSocket.State != WebSocketState.Open)
+                    var message = _upstreamMessages.Take(token);
+                    try
+                    {
+                        var batch = new List<object> { new CheckInMessage(Identifier), message };
+                        var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, batch));
+                        await _webSocket.SendAsync(content, WebSocketMessageType.Binary, true, token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        RequeueFirst(message);
+                        throw;
+                    }
+                    catch
+                    {
+                        RequeueFirst(message);
                         break;
-
-                    var batch = new List<object> { new CheckInMessage(Identifier), first };
-                    while (_upstreamMessages.TryTake(out var msg))
-                        batch.Add(msg);
-
-                    var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, batch));
-                    await _webSocket.SendAsync(content, WebSocketMessageType.Binary, true, token);
+                    }
                 }
             }
             catch (OperationCanceledException)
