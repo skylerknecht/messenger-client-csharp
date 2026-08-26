@@ -47,9 +47,27 @@ namespace MessengerClient
             }
             response.EnsureSuccessStatusCode();
 
-            if (string.IsNullOrEmpty(Identifier))
+            byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
+
+            if (!string.IsNullOrEmpty(Identifier))
             {
-                byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
+                if (responseBytes != null && responseBytes.Length > 0)
+                {
+                    var messages = DeserializeMessages(_encryptionKey, responseBytes);
+                    if (messages.Any(m => m is CheckOutMessage))
+                    {
+                        HandleCheckout();
+                        return;
+                    }
+                    foreach (var msg in messages)
+                    {
+                        DispatchMessage(msg);
+                    }
+                }
+                return;
+            }
+
+            {
                 var (_, parsedMessage) = MessageParser.DeserializeMessage(_encryptionKey, responseBytes);
 
                 if (parsedMessage is CheckInMessage checkInMsg)
