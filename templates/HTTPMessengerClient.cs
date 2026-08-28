@@ -91,12 +91,8 @@ namespace MessengerClient
             {
                 if (_pending.Count == 0)
                 {
-                    int drained = 0;
-                    while (drained < 5 && _upstreamMessages.TryDequeue(out var message))
-                    {
+                    while (_upstreamMessages.TryDequeue(out var message))
                         _pending.Add(message);
-                        drained++;
-                    }
                 }
 
                 var batch = new List<object> { new CheckInMessage(Identifier) };

@@ -18,6 +18,7 @@ namespace MessengerClient
         private readonly IWebProxy _proxy;
         private ClientWebSocket _webSocket;
         private readonly BlockingCollection<object> _upstreamMessages = new BlockingCollection<object>();
+        private readonly List<object> _pending = new List<object>();
         private CancellationTokenSource _cancellationTokenSource;
 
         public WebSocketMessengerClient(string uri, byte[] encryptionKey, string userAgent, IWebProxy proxy = null)
@@ -166,36 +167,32 @@ namespace MessengerClient
             return Task.CompletedTask;
         }
 
-        private void RequeueFirst(object message)
-        {
-            var remaining = new List<object> { message };
-            while (_upstreamMessages.TryTake(out var m))
-                remaining.Add(m);
-            foreach (var m in remaining)
-                _upstreamMessages.Add(m);
-        }
-
         private async Task SendMessagesAsync(CancellationToken token)
         {
             try
             {
                 while (!token.IsCancellationRequested)
                 {
-                    var message = _upstreamMessages.Take(token);
+                    if (_pending.Count == 0)
+                    {
+                        _pending.Add(_upstreamMessages.Take(token));
+                        while (_upstreamMessages.TryTake(out var m))
+                            _pending.Add(m);
+                    }
                     try
                     {
-                        var batch = new List<object> { new CheckInMessage(Identifier), message };
+                        var batch = new List<object> { new CheckInMessage(Identifier) };
+                        batch.AddRange(_pending);
                         var content = new ArraySegment<byte>(SerializeMessages(_encryptionKey, batch));
                         await _webSocket.SendAsync(content, WebSocketMessageType.Binary, true, token);
+                        _pending.Clear();
                     }
                     catch (OperationCanceledException)
                     {
-                        RequeueFirst(message);
                         throw;
                     }
                     catch
                     {
-                        RequeueFirst(message);
                         break;
                     }
                 }
