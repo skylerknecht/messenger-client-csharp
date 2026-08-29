@@ -36,18 +36,17 @@ namespace MessengerClient
 
         public override async Task ConnectAsync()
         {
-            var upstreamMessage = MessageBuilder.SerializeMessage(_encryptionKey, new CheckInMessage(Identifier));
-            HttpContent content = new ByteArrayContent(upstreamMessage);
-            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-
-            HttpResponseMessage response;
-            using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            byte[] responseBytes;
+            using (var content = new ByteArrayContent(MessageBuilder.SerializeMessage(_encryptionKey, new CheckInMessage(Identifier))))
             {
-                response = await _httpClient.PostAsync(_uri, content, cts.Token);
+                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+                using (var response = await _httpClient.PostAsync(_uri, content, cts.Token))
+                {
+                    response.EnsureSuccessStatusCode();
+                    responseBytes = await response.Content.ReadAsByteArrayAsync();
+                }
             }
-            response.EnsureSuccessStatusCode();
-
-            byte[] responseBytes = await response.Content.ReadAsByteArrayAsync();
 
             if (!string.IsNullOrEmpty(Identifier))
             {
@@ -67,19 +66,17 @@ namespace MessengerClient
                 return;
             }
 
-            {
-                var (_, parsedMessage) = MessageParser.DeserializeMessage(_encryptionKey, responseBytes);
+            var (_, parsedMessage) = MessageParser.DeserializeMessage(_encryptionKey, responseBytes);
 
-                if (parsedMessage is CheckInMessage checkInMsg)
-                {
-                    Identifier = checkInMsg.MessengerId;
-                }
-                else
-                {
-                    throw new InvalidOperationException(
-                        $"Expected CheckInMessage, got {parsedMessage.GetType().Name}"
-                    );
-                }
+            if (parsedMessage is CheckInMessage checkInMsg)
+            {
+                Identifier = checkInMsg.MessengerId;
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Expected CheckInMessage, got {parsedMessage.GetType().Name}"
+                );
             }
         }
 

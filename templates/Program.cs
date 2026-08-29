@@ -120,6 +120,7 @@ namespace MessengerClient
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[!] Connection failed: {ex.Message}");
+                    client.CloseTransport();
                     client = null;
                     continue;
                 }
@@ -165,6 +166,8 @@ namespace MessengerClient
                     try
                     {
                         await client.ConnectAsync();
+                        if (client.Killed)
+                            break;
                         Console.WriteLine("[+] Reconnected");
                         consecutiveFailures = 0;
                         await client.StartAsync();
