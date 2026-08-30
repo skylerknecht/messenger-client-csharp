@@ -4,7 +4,7 @@ using System.Text;
 using System.Security.Cryptography;
 
 
-// Thrown when an encrypted payload cannot be decrypted — almost always a wrong
+// Thrown when an encrypted payload cannot be decrypted -- almost always a wrong
 // encryption key. Treated as fatal: the messenger can never decrypt server
 // traffic, so Main logs once and stops instead of reconnecting in a loop.
 public class DecryptionException : Exception
@@ -176,7 +176,7 @@ public static class MessageParser
         var (addressType, remainder4) = ReadUInt32(remainder3);
         var (reason, remainder5) = ReadUInt32(remainder4);
 
-        // remote_addr / remote_port are optional — the server omits them when
+        // remote_addr / remote_port are optional -- the server omits them when
         // it has no remote info (e.g. a reason!=0 denial). Only read them if
         // bytes remain, otherwise a Rep without them overruns the buffer.
         string remoteAddr = "";

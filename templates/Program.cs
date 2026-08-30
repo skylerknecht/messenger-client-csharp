@@ -114,7 +114,7 @@ namespace MessengerClient
                 }
                 catch (DecryptionException)
                 {
-                    Console.WriteLine("[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
+                    Console.WriteLine("[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
                     return;
                 }
                 catch (Exception ex)
@@ -140,7 +140,7 @@ namespace MessengerClient
                 }
                 catch (DecryptionException)
                 {
-                    Console.WriteLine("[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
+                    Console.WriteLine("[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
                     return;
                 }
                 catch (Exception ex)
@@ -174,7 +174,7 @@ namespace MessengerClient
                     }
                     catch (DecryptionException)
                     {
-                        Console.WriteLine("[!] Decryption failed — the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
+                        Console.WriteLine("[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
                         return;
                     }
                     catch (Exception ex)
