@@ -43,6 +43,7 @@ namespace MessengerClient
             _webSocket = new ClientWebSocket();
             if (_proxy != null)
                 _webSocket.Options.Proxy = _proxy;
+            _webSocket.Options.SetRequestHeader("User-Agent", _userAgent);
 
             await _webSocket.ConnectAsync(_uri, CancellationToken.None);
 
@@ -68,7 +69,7 @@ namespace MessengerClient
 
                 var responseMessages = DeserializeMessages(_encryptionKey, messageData);
 
-                if (responseMessages[0] is CheckInMessage responseCheckIn)
+                if (responseMessages.Count > 0 && responseMessages[0] is CheckInMessage responseCheckIn)
                 {
                     Identifier = responseCheckIn.MessengerId;
                 }

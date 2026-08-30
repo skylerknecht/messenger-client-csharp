@@ -305,7 +305,7 @@ namespace MessengerClient
                     {
                         await SendUpstreamMessageAsync(new InitiateTCPClientRep(
                             message.ClientId, "0.0.0.0", 0, 1, 0x01,
-                            "0.0.0.0", 0));
+                            "", 0));
                     }
                     return;
                 }
@@ -360,7 +360,7 @@ namespace MessengerClient
 
                     await SendUpstreamMessageAsync(new InitiateTCPClientRep(
                         message.ClientId, "0.0.0.0", 0, 1, reason,
-                        "0.0.0.0", 0));
+                        "", 0));
                 }
             }
             catch (ArgumentException)
@@ -369,7 +369,7 @@ namespace MessengerClient
                 {
                     await SendUpstreamMessageAsync(new InitiateTCPClientRep(
                         message.ClientId, "0.0.0.0", 0, 1, 0x04,
-                        "0.0.0.0", 0));
+                        "", 0));
                 }
             }
             catch (Exception ex)
@@ -379,7 +379,7 @@ namespace MessengerClient
                 {
                     await SendUpstreamMessageAsync(new InitiateTCPClientRep(
                         message.ClientId, "0.0.0.0", 0, 1, 0x01,
-                        "0.0.0.0", 0));
+                        "", 0));
                 }
             }
             finally

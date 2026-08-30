@@ -66,17 +66,15 @@ namespace MessengerClient
                 return;
             }
 
-            var (_, parsedMessage) = MessageParser.DeserializeMessage(_encryptionKey, responseBytes);
+            var connectMessages = DeserializeMessages(_encryptionKey, responseBytes);
 
-            if (parsedMessage is CheckInMessage checkInMsg)
+            if (connectMessages.Count > 0 && connectMessages[0] is CheckInMessage checkInMsg)
             {
                 Identifier = checkInMsg.MessengerId;
             }
             else
             {
-                throw new InvalidOperationException(
-                    $"Expected CheckInMessage, got {parsedMessage.GetType().Name}"
-                );
+                throw new InvalidOperationException("Expected CheckInMessage from server");
             }
         }
 
