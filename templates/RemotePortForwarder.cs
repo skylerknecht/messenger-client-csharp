@@ -31,8 +31,10 @@ namespace MessengerClient
         {
             try
             {
-                var addresses = Dns.GetHostAddresses(_listeningHost);
-                _tcpListener = new TcpListener(addresses[0], _listeningPort);
+                var addresses = await Dns.GetHostAddressesAsync(_listeningHost);
+                var listenAddr = Array.Find(addresses, a => a.AddressFamily == AddressFamily.InterNetwork)
+                    ?? addresses[0];
+                _tcpListener = new TcpListener(listenAddr, _listeningPort);
                 _tcpListener.Start();
                 Console.WriteLine($"[+] Remote Port Forwarder listening on {_listeningHost}:{_listeningPort}");
             }

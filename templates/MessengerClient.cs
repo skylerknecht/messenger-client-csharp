@@ -239,17 +239,55 @@ namespace MessengerClient
             try
             {
                 var addresses = await Dns.GetHostAddressesAsync(message.DestinationHost);
-                var target = addresses.First(a => a.AddressFamily == AddressFamily.InterNetwork || a.AddressFamily == AddressFamily.InterNetworkV6);
+                var candidates = addresses
+                    .Where(a => a.AddressFamily == AddressFamily.InterNetwork || a.AddressFamily == AddressFamily.InterNetworkV6)
+                    .OrderBy(a => a.AddressFamily == AddressFamily.InterNetworkV6 ? 1 : 0)
+                    .ToArray();
 
-                socket = new Socket(target.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                if (candidates.Length == 0)
+                    throw new SocketException((int)SocketError.HostNotFound);
 
-                if (socket.AddressFamily == AddressFamily.InterNetworkV6)
-                    socket.DualMode = true;
+                SocketException lastEx = null;
+                var deadline = DateTime.UtcNow.AddSeconds(5);
 
-                var connectTask = socket.ConnectAsync(target, message.DestinationPort);
-                if (await Task.WhenAny(connectTask, Task.Delay(5000)) != connectTask)
-                    throw new SocketException((int)SocketError.TimedOut);
-                await connectTask;
+                foreach (var target in candidates)
+                {
+                    socket = new Socket(target.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                    if (socket.AddressFamily == AddressFamily.InterNetworkV6)
+                        socket.DualMode = true;
+
+                    var remaining = deadline - DateTime.UtcNow;
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        socket.Dispose(); socket = null;
+                        throw new SocketException((int)SocketError.TimedOut);
+                    }
+
+                    try
+                    {
+                        var connectTask = socket.ConnectAsync(target, message.DestinationPort);
+                        if (await Task.WhenAny(connectTask, Task.Delay(remaining)) != connectTask)
+                        {
+                            connectTask.ContinueWith(t => { var _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+                            socket.Dispose(); socket = null;
+                            throw new SocketException((int)SocketError.TimedOut);
+                        }
+                        await connectTask;
+                        lastEx = null;
+                        break;
+                    }
+                    catch (SocketException ex) when (ex.SocketErrorCode == SocketError.TimedOut)
+                    {
+                        throw;
+                    }
+                    catch (SocketException ex)
+                    {
+                        lastEx = ex;
+                        socket.Dispose(); socket = null;
+                    }
+                }
+
+                if (lastEx != null) throw lastEx;
 
                 if (Killed)
                 {
@@ -279,7 +317,7 @@ namespace MessengerClient
                 int bindPort = localEndPoint.Port;
                 string remoteAddr = remoteEndPoint.Address.ToString();
                 int remotePort = remoteEndPoint.Port;
-                int atype = (target.AddressFamily == AddressFamily.InterNetwork) ? 1 : 4;
+                int atype = (client.Client.AddressFamily == AddressFamily.InterNetwork) ? 1 : 4;
 
                 var repObj = new InitiateTCPClientRep(
                     message.ClientId, bindAddress, bindPort, atype, 0,

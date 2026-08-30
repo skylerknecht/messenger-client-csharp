@@ -435,12 +435,17 @@ public static class MessageBuilder
         WriteUInt32(part3, 4, (uint)addressType);
         WriteUInt32(part3, 8, (uint)reason);
 
-        var part4 = BuildString(remoteAddr);
+        if (!string.IsNullOrEmpty(remoteAddr))
+        {
+            var part4 = BuildString(remoteAddr);
 
-        byte[] part5 = new byte[4];
-        WriteUInt32(part5, 0, (uint)remotePort);
+            byte[] part5 = new byte[4];
+            WriteUInt32(part5, 0, (uint)remotePort);
 
-        return Combine(part1, part2, part3, part4, part5);
+            return Combine(part1, part2, part3, part4, part5);
+        }
+
+        return Combine(part1, part2, part3);
     }
 
     public static byte[] BuildSendData(string clientId, byte[] data)

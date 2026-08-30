@@ -24,22 +24,17 @@ namespace MessengerClient
                 switch (args[i])
                 {
                     case "--server-url":
-                        parsed["server-url"] = args[++i];
-                        break;
                     case "--encryption-key":
-                        parsed["encryption-key"] = args[++i];
-                        break;
                     case "--user-agent":
-                        parsed["user-agent"] = args[++i];
-                        break;
                     case "--proxy":
-                        parsed["proxy"] = args[++i];
-                        break;
                     case "--retry-duration":
-                        parsed["retry-duration"] = args[++i];
-                        break;
                     case "--retry-attempts":
-                        parsed["retry-attempts"] = args[++i];
+                        if (i + 1 >= args.Length)
+                        {
+                            Console.WriteLine($"[!] {args[i]} requires a value.");
+                            break;
+                        }
+                        parsed[args[i].Substring(2)] = args[++i];
                         break;
                     default:
                         Console.WriteLine($"[!] Could not find argument `{args[i]}`.");
