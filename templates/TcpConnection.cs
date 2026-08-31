@@ -42,11 +42,18 @@ namespace MessengerClient
                 Messenger.SendUpstreamMessageAsync(new SendDataMessage(ClientId, Array.Empty<byte>()));
         }
 
+        public void GracefulClose()
+        {
+            var pair = new KeyValuePair<string, TcpConnection>(ClientId, this);
+            ((ICollection<KeyValuePair<string, TcpConnection>>)Messenger.TcpClients).Remove(pair);
+            try { WriteQueue.CompleteAdding(); } catch (ObjectDisposedException) { }
+        }
+
         public void SendData(byte[] data)
         {
             if (data.Length == 0)
             {
-                Abort();
+                GracefulClose();
             }
             else
             {
@@ -64,6 +71,10 @@ namespace MessengerClient
             catch
             {
                 AbortAndSignal();
+            }
+            finally
+            {
+                try { Client.Close(); } catch { }
             }
         }
 

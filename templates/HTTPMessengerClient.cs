@@ -86,7 +86,7 @@ namespace MessengerClient
             {
                 if (_pending.Count == 0)
                 {
-                    while (_upstreamMessages.TryDequeue(out var message))
+                    while (_pending.Count < MaxBatchSize && _upstreamMessages.TryDequeue(out var message))
                         _pending.Add(message);
                 }
 

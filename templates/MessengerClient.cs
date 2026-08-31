@@ -12,6 +12,7 @@ namespace MessengerClient
 {
     public abstract class MessengerClient
     {
+        protected const int MaxBatchSize = 100;
         public string Identifier = string.Empty;
         public ConcurrentDictionary<string, TcpConnection> TcpClients = new ConcurrentDictionary<string, TcpConnection>();
         public ConcurrentDictionary<string, RemotePortForwarder> RemotePortForwarders = new ConcurrentDictionary<string, RemotePortForwarder>();

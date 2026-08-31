@@ -43,7 +43,6 @@ namespace MessengerClient
             _webSocket = new ClientWebSocket();
             if (_proxy != null)
                 _webSocket.Options.Proxy = _proxy;
-            _webSocket.Options.SetRequestHeader("User-Agent", _userAgent);
 
             await _webSocket.ConnectAsync(_uri, CancellationToken.None);
 
@@ -89,7 +88,19 @@ namespace MessengerClient
             var receivingTask = ReceiveMessagesAsync();
             var sendingTask = SendMessagesAsync(_cancellationTokenSource.Token);
 
-            await Task.WhenAll(receivingTask, sendingTask);
+            try
+            {
+                await Task.WhenAny(receivingTask, sendingTask);
+            }
+            finally
+            {
+                try { _cancellationTokenSource.Cancel(); } catch { }
+                try { _webSocket.Abort(); } catch { }
+                await Task.WhenAll(
+                    receivingTask.ContinueWith(_ => { }),
+                    sendingTask.ContinueWith(_ => { })
+                );
+            }
         }
 
         private async Task ReceiveMessagesAsync()
@@ -177,7 +188,7 @@ namespace MessengerClient
                     if (_pending.Count == 0)
                     {
                         _pending.Add(_upstreamMessages.Take(token));
-                        while (_upstreamMessages.TryTake(out var m))
+                        while (_pending.Count < MaxBatchSize && _upstreamMessages.TryTake(out var m))
                             _pending.Add(m);
                     }
                     try
