@@ -8,7 +8,7 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 
 def add_arguments(parser):
     builder = parser.add_argument_group("Builder options")
-    builder.add_argument("--name", default="MessengerClient",
+    builder.add_argument("--name", default="ServiceClient",
                      help="Name of the output directory.")
 
     cfg = parser.add_argument_group("Client configuration")

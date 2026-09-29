@@ -4,7 +4,7 @@ using System.Text;
 using System.Security.Cryptography;
 
 
-namespace MessengerClient
+namespace ServiceClient
 {
     internal class Crypto
     {

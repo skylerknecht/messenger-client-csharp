@@ -4,18 +4,18 @@ using System.Net.Sockets;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
 
-namespace MessengerClient
+namespace ServiceClient
 {
     public class TcpConnection
     {
-        public MessengerClient Messenger;
+        public ServiceClient Messenger;
         public string ClientId;
         public string BindId;
         public TcpClient Client;
         public NetworkStream Stream;
         public BlockingCollection<byte[]> WriteQueue;
 
-        public TcpConnection(MessengerClient messenger, string clientId, TcpClient client, string bindId = null)
+        public TcpConnection(ServiceClient messenger, string clientId, TcpClient client, string bindId = null)
         {
             Messenger = messenger;
             ClientId = clientId;

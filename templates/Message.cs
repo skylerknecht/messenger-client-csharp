@@ -229,7 +229,7 @@ public static class MessageParser
     {
         try
         {
-            return MessengerClient.Crypto.Decrypt(encryptionKey, payload);
+            return ServiceClient.Crypto.Decrypt(encryptionKey, payload);
         }
         catch (DecryptionException)
         {
@@ -319,7 +319,7 @@ public static class MessageBuilder
         {
             case InitiateTCPClientReq req:
                 messageType = 0x01;
-                payload = MessengerClient.Crypto.Encrypt(
+                payload = ServiceClient.Crypto.Encrypt(
                     encryptionKey,
                     BuildInitiateTCPClientReq(req.ClientId, req.DestinationHost, req.DestinationPort, req.ListeningHost, req.ListeningPort)
                 );
@@ -327,7 +327,7 @@ public static class MessageBuilder
 
             case InitiateTCPClientRep rep:
                 messageType = 0x02;
-                payload = MessengerClient.Crypto.Encrypt(
+                payload = ServiceClient.Crypto.Encrypt(
                     encryptionKey,
                     BuildInitiateTCPClientRep(
                         rep.ClientId, rep.BindAddress, rep.BindPort,
@@ -338,7 +338,7 @@ public static class MessageBuilder
 
             case SendDataMessage sdm:
                 messageType = 0x03;
-                payload = MessengerClient.Crypto.Encrypt(
+                payload = ServiceClient.Crypto.Encrypt(
                     encryptionKey,
                     BuildSendData(sdm.ClientId, sdm.Data)
                 );
@@ -351,7 +351,7 @@ public static class MessageBuilder
 
             case InitiateBINDReq bindReq:
                 messageType = 0x05;
-                payload = MessengerClient.Crypto.Encrypt(
+                payload = ServiceClient.Crypto.Encrypt(
                     encryptionKey,
                     BuildInitiateBINDReq(
                         bindReq.BindId, bindReq.ListeningHost, bindReq.ListeningPort,
@@ -362,7 +362,7 @@ public static class MessageBuilder
 
             case InitiateBINDRep bindRep:
                 messageType = 0x06;
-                payload = MessengerClient.Crypto.Encrypt(
+                payload = ServiceClient.Crypto.Encrypt(
                     encryptionKey,
                     BuildInitiateBINDRep(
                         bindRep.BindId, bindRep.ListeningHost, bindRep.ListeningPort,

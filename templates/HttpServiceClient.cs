@@ -7,9 +7,9 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace MessengerClient
+namespace ServiceClient
 {
-    public class HTTPMessengerClient : MessengerClient
+    public class HttpServiceClient : ServiceClient
     {
         private readonly string _uri;
         private readonly HttpClient _httpClient;
@@ -17,7 +17,7 @@ namespace MessengerClient
         private readonly ConcurrentQueue<object> _upstreamMessages;
         private readonly List<object> _pending = new List<object>();
 
-        public HTTPMessengerClient(string uri, byte[] encryptionKey, string userAgent, IWebProxy proxy = null)
+        public HttpServiceClient(string uri, byte[] encryptionKey, string userAgent, IWebProxy proxy = null)
         {
             _uri = uri;
             _encryptionKey = encryptionKey;

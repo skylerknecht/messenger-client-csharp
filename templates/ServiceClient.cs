@@ -8,9 +8,9 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 
-namespace MessengerClient
+namespace ServiceClient
 {
-    public abstract class MessengerClient
+    public abstract class ServiceClient
     {
         protected const int MaxBatchSize = 100;
         public string Identifier = string.Empty;

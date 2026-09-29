@@ -8,9 +8,9 @@ using System.Net.WebSockets;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace MessengerClient
+namespace ServiceClient
 {
-    public class WebSocketMessengerClient : MessengerClient
+    public class WsServiceClient : ServiceClient
     {
         private readonly Uri _uri;
         private readonly byte[] _encryptionKey;
@@ -21,7 +21,7 @@ namespace MessengerClient
         private readonly List<object> _pending = new List<object>();
         private CancellationTokenSource _cancellationTokenSource;
 
-        public WebSocketMessengerClient(string uri, byte[] encryptionKey, string userAgent, IWebProxy proxy = null)
+        public WsServiceClient(string uri, byte[] encryptionKey, string userAgent, IWebProxy proxy = null)
         {
             _uri = new Uri(uri);
             _encryptionKey = encryptionKey;

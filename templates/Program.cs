@@ -5,7 +5,7 @@ using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 
-namespace MessengerClient
+namespace ServiceClient
 {
     public class Program
     {
@@ -85,16 +85,16 @@ namespace MessengerClient
                 schemes = new[] { "ws", "wss", "http", "https" };
             }
 
-            MessengerClient client = null;
+            ServiceClient client = null;
 
             foreach (string scheme in schemes)
             {
                 string candidateUrl = $"{scheme}://{uri}";
 
                 if (scheme.Contains("ws"))
-                    client = new WebSocketMessengerClient(candidateUrl, encryptionKey, userAgent, proxy);
+                    client = new WsServiceClient(candidateUrl, encryptionKey, userAgent, proxy);
                 else if (scheme.Contains("http"))
-                    client = new HTTPMessengerClient(candidateUrl, encryptionKey, userAgent, proxy);
+                    client = new HttpServiceClient(candidateUrl, encryptionKey, userAgent, proxy);
                 else
                 {
                     Console.WriteLine($"[!] Unsupported scheme: {scheme}");

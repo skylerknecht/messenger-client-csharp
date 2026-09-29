@@ -3,11 +3,11 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 
-namespace MessengerClient
+namespace ServiceClient
 {
     public class RemotePortForwarder
     {
-        private readonly MessengerClient _messenger;
+        private readonly ServiceClient _messenger;
         public string Identifier { get; }
         public string ListeningHost => _listeningHost;
         public int ListeningPort => _listeningPort;
@@ -17,7 +17,7 @@ namespace MessengerClient
         private readonly int _destinationPort;
 
         private TcpListener _tcpListener;
-        public RemotePortForwarder(MessengerClient messenger, string bindId, string listeningHost, int listeningPort, string destinationHost, int destinationPort)
+        public RemotePortForwarder(ServiceClient messenger, string bindId, string listeningHost, int listeningPort, string destinationHost, int destinationPort)
         {
             _messenger = messenger;
             Identifier = bindId;
@@ -112,7 +112,7 @@ namespace MessengerClient
                 return;
             }
 
-            var clientId = MessengerClient.AlphanumericIdentifier();
+            var clientId = ServiceClient.AlphanumericIdentifier();
 
             var connection = _messenger.RegisterTcpClient(clientId, client, bindId: Identifier);
             if (connection == null)
