@@ -59,6 +59,16 @@ def build(args):
             shutil.copy2(src, dest)
 
     print(f"[+] Wrote C# client to '{out_dir}'")
+    print()
+    print(f"Next: compile to a standalone .exe (requires the .NET Framework 4.7.2 SDK):")
+    print(f"    dotnet build {out_dir}/ServiceClient.csproj -c Release")
+    print(f"    # Binary lands at: {out_dir}/bin/Release/net472/ServiceClient.exe")
+    print()
+    print("Or with MSBuild directly:")
+    print(f"    msbuild {out_dir}/ServiceClient.csproj /p:Configuration=Release")
+    print()
+    print("The .csproj is configured with DebugType=none and DebugSymbols=false so no .pdb")
+    print("is produced, and Deterministic=true drops embedded timestamps.")
 
 
 if __name__ == "__main__":
