@@ -1,7 +1,11 @@
 import argparse
 import shutil
-
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import its
+
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
@@ -60,15 +64,22 @@ def build(args):
 
     print(f"[+] Wrote C# client to '{out_dir}'")
     print()
-    print(f"Next: compile to a standalone .exe (requires the .NET Framework 4.7.2 SDK):")
-    print(f"    dotnet build {out_dir}/ServiceClient.csproj -c Release")
-    print(f"    # Binary lands at: {out_dir}/bin/Release/net472/ServiceClient.exe")
+    print("Next: compile to a standalone .exe.")
+    if its.windows:
+        print()
+        print("    # requires MSBuild (Visual Studio Build Tools or a full VS install):")
+        print(f"    msbuild {out_dir}\\ServiceClient.csproj /p:Configuration=Release")
+        print(f"    # binary lands at: {out_dir}\\bin\\Release\\net472\\ServiceClient.exe")
+    else:
+        print()
+        print("    # install the dotnet SDK if needed:")
+        print("    curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel LTS")
+        print("    export PATH=\"$HOME/.dotnet:$PATH\"")
+        print(f"    dotnet build {out_dir}/ServiceClient.csproj -c Release")
+        print(f"    # binary lands at: {out_dir}/bin/Release/net472/ServiceClient.exe")
     print()
-    print("Or with MSBuild directly:")
-    print(f"    msbuild {out_dir}/ServiceClient.csproj /p:Configuration=Release")
-    print()
-    print("The .csproj is configured with DebugType=none and DebugSymbols=false so no .pdb")
-    print("is produced, and Deterministic=true drops embedded timestamps.")
+    print("The .csproj sets DebugType=none / DebugSymbols=false so no .pdb is")
+    print("produced, and Deterministic=true drops embedded timestamps.")
 
 
 if __name__ == "__main__":
