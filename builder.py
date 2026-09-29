@@ -10,6 +10,8 @@ def add_arguments(parser):
     builder = parser.add_argument_group("Builder options")
     builder.add_argument("--name", default="ServiceClient",
                      help="Name of the output directory.")
+    builder.add_argument("--no-print", action="store_true",
+                     help="Compile output-suppression into the client (Console.Out and Console.Error redirected to TextWriter.Null at Main entry).")
 
     cfg = parser.add_argument_group("Client configuration")
     cfg.add_argument("--server-url", default="localhost:8080",

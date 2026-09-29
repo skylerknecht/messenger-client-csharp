@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
@@ -16,6 +17,20 @@ namespace ServiceClient
         private const double RETRY_DURATION = {{ retry_duration }};
         private const int RETRY_ATTEMPTS = {{ retry_attempts }};
 
+        private static void PrintHelp()
+        {
+            Console.WriteLine("Usage: ServiceClient [options]");
+            Console.WriteLine();
+            Console.WriteLine("Options:");
+            Console.WriteLine("  --server-url <url>         Server URL to connect to");
+            Console.WriteLine("  --encryption-key <key>     AES encryption key");
+            Console.WriteLine("  --user-agent <ua>          Custom User-Agent string");
+            Console.WriteLine("  --proxy <url>              Proxy URL");
+            Console.WriteLine("  --retry-duration <secs>    Total time to retry connecting");
+            Console.WriteLine("  --retry-attempts <n>       Number of retry attempts");
+            Console.WriteLine("  -h, --help                 Show this help message");
+        }
+
         private static Dictionary<string, string> ParseArgs(string[] args)
         {
             var parsed = new Dictionary<string, string>();
@@ -23,6 +38,11 @@ namespace ServiceClient
             {
                 switch (args[i])
                 {
+                    case "-h":
+                    case "--help":
+                        PrintHelp();
+                        Environment.Exit(0);
+                        break;
                     case "--server-url":
                     case "--encryption-key":
                     case "--user-agent":
@@ -46,6 +66,10 @@ namespace ServiceClient
 
         public static async Task Main(string[] args)
         {
+{% if no_print %}
+            Console.SetOut(TextWriter.Null);
+            Console.SetError(TextWriter.Null);
+{% endif %}
             ServicePointManager.ServerCertificateValidationCallback =
                 new RemoteCertificateValidationCallback(ValidateServerCertificate);
 
