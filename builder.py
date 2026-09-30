@@ -16,6 +16,8 @@ def add_arguments(parser):
                      help="Name of the output directory.")
     builder.add_argument("--no-print", action="store_true",
                      help="Compile output-suppression into the client (Console.Out and Console.Error redirected to TextWriter.Null at Main entry).")
+    builder.add_argument("--exit-on-close", action="store_true",
+                     help="Call Environment.Exit(0) when the server sends a kill signal, terminating the host process.")
 
     cfg = parser.add_argument_group("Client configuration")
     cfg.add_argument("--server-url", default="localhost:8080",
@@ -67,8 +69,10 @@ def build(args):
     print("Next: compile to a standalone .exe.")
     if its.windows:
         print()
-        print("    # requires MSBuild (Visual Studio Build Tools or a full VS install):")
-        print(f"    msbuild {out_dir}\\ServiceClient.csproj /p:Configuration=Release")
+        print("    # install the .NET SDK if needed:")
+        print("    winget install Microsoft.DotNet.SDK.8")
+        print()
+        print(f"    dotnet build {out_dir}\\ServiceClient.csproj -c Release")
         print(f"    # binary lands at: {out_dir}\\bin\\Release\\net472\\ServiceClient.exe")
     else:
         print()

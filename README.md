@@ -39,8 +39,9 @@ Options provided to the builder are hardcoded into the source files. The operato
 
 | Flag          | Default        | Description                                    |
 |---------------|----------------|------------------------------------------------|
-| `--name`      | ServiceClient  | Output directory name                          |
-| `--no-print`  | off            | Suppress all stdout/stderr at startup          |
+| `--name`          | ServiceClient  | Output directory name                          |
+| `--no-print`      | off            | Suppress all stdout/stderr at startup          |
+| `--exit-on-close` | off            | Terminate the host process on kill signal       |
 
 ### Client Configuration
 

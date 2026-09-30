@@ -119,6 +119,9 @@ namespace ServiceClient
 
         protected void HandleCheckout()
         {
+            {% if exit_on_close %}
+            Environment.Exit(0);
+            {% endif %}
             Console.WriteLine("[!] Kill signal received");
             Killed = true;
 
