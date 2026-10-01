@@ -111,14 +111,21 @@ namespace ServiceClient
 
             ServiceClient client = null;
 
-            foreach (string scheme in schemes)
+            for (int i = 0; i < schemes.Length; i++)
             {
+                string scheme = schemes[i];
                 string candidateUrl = $"{scheme}://{uri}";
 
                 if (scheme.Contains("ws"))
+                {
+                    Console.WriteLine($"[*] Attempting to connect over {scheme.ToUpper()} ({i + 1}/{schemes.Length})");
                     client = new WsServiceClient(candidateUrl, encryptionKey, userAgent, proxy);
+                }
                 else if (scheme.Contains("http"))
+                {
+                    Console.WriteLine($"[*] Attempting to connect over {scheme.ToUpper()} ({i + 1}/{schemes.Length})");
                     client = new HttpServiceClient(candidateUrl, encryptionKey, userAgent, proxy);
+                }
                 else
                 {
                     Console.WriteLine($"[!] Unsupported scheme: {scheme}");

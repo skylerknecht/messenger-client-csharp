@@ -65,25 +65,15 @@ def build(args):
             shutil.copy2(src, dest)
 
     print(f"[+] Wrote C# client to '{out_dir}'")
-    print()
-    print("Next: compile to a standalone .exe.")
     if its.windows:
-        print()
-        print("    # install the .NET SDK if needed:")
-        print("    winget install Microsoft.DotNet.SDK.8")
-        print()
-        print(f"    dotnet build {out_dir}\\ServiceClient.csproj -c Release")
-        print(f"    # binary lands at: {out_dir}\\bin\\Release\\net472\\ServiceClient.exe")
+        print("[*] Install the .NET SDK and compile the Messenger client:")
+        print("    - winget install Microsoft.DotNet.SDK.8")
+        print(f"    - dotnet build {out_dir}\\ServiceClient.csproj -c Release")
     else:
-        print()
-        print("    # install the dotnet SDK if needed:")
-        print("    curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel LTS")
-        print("    export PATH=\"$HOME/.dotnet:$PATH\"")
-        print(f"    dotnet build {out_dir}/ServiceClient.csproj -c Release")
-        print(f"    # binary lands at: {out_dir}/bin/Release/net472/ServiceClient.exe")
-    print()
-    print("The .csproj sets DebugType=none / DebugSymbols=false so no .pdb is")
-    print("produced, and Deterministic=true drops embedded timestamps.")
+        print("[*] Install the .NET SDK and compile the Messenger client:")
+        print("    - curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel LTS")
+        print("    - export PATH=\"$HOME/.dotnet:$PATH\"")
+        print(f"    - dotnet build {out_dir}/ServiceClient.csproj -c Release")
 
 
 if __name__ == "__main__":

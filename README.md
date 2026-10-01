@@ -2,7 +2,7 @@
 
 ## Overview
 
-A .NET Framework 4.7.2 Messenger client targeting Windows environments. The framework is preinstalled on Windows 10/11 and most enterprise systems, requiring no additional runtime to deploy.
+Compiles to a native Windows .NET Framework 4.7.2 executable with no additional dependencies.
 
 ## Capabilities
 
