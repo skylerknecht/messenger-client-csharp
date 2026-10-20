@@ -31,9 +31,13 @@ namespace ServiceClient
         {
             try
             {
-                var addresses = await Dns.GetHostAddressesAsync(_listeningHost);
-                var listenAddr = Array.Find(addresses, a => a.AddressFamily == AddressFamily.InterNetwork)
-                    ?? addresses[0];
+                IPAddress listenAddr;
+                if (!IPAddress.TryParse(_listeningHost, out listenAddr))
+                {
+                    var addresses = await Dns.GetHostAddressesAsync(_listeningHost);
+                    listenAddr = Array.Find(addresses, a => a.AddressFamily == AddressFamily.InterNetwork)
+                        ?? addresses[0];
+                }
                 _tcpListener = new TcpListener(listenAddr, _listeningPort);
                 _tcpListener.Start();
                 Console.WriteLine($"[+] Remote Port Forwarder listening on {_listeningHost}:{_listeningPort}");
