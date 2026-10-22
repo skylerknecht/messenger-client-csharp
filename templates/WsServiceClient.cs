@@ -21,6 +21,8 @@ namespace ServiceClient
         private readonly List<object> _pending = new List<object>();
         private CancellationTokenSource _cancellationTokenSource;
 
+        // ClientWebSocket does not support setting a custom User-Agent header on
+        // .NET Framework 4.7.2 — the Headers collection throws on restricted headers.
         public WsServiceClient(string uri, byte[] encryptionKey, string userAgent, IWebProxy proxy = null)
         {
             _uri = new Uri(uri);

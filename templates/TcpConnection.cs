@@ -1,7 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net.Sockets;
-using System.Collections.Concurrent;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ServiceClient
@@ -13,7 +14,9 @@ namespace ServiceClient
         public string BindId;
         public TcpClient Client;
         public NetworkStream Stream;
-        public BlockingCollection<byte[]> WriteQueue;
+        private readonly ConcurrentQueue<byte[]> _writeQueue;
+        private readonly SemaphoreSlim _signal;
+        private readonly CancellationTokenSource _cts;
 
         public TcpConnection(ServiceClient messenger, string clientId, TcpClient client, string bindId = null)
         {
@@ -22,7 +25,9 @@ namespace ServiceClient
             BindId = bindId;
             Client = client;
             Stream = client.GetStream();
-            WriteQueue = new BlockingCollection<byte[]>();
+            _writeQueue = new ConcurrentQueue<byte[]>();
+            _signal = new SemaphoreSlim(0);
+            _cts = new CancellationTokenSource();
         }
 
         public bool Abort()
@@ -31,7 +36,7 @@ namespace ServiceClient
             if (!((ICollection<KeyValuePair<string, TcpConnection>>)Messenger.TcpClients).Remove(pair))
                 return false;
 
-            WriteQueue.CompleteAdding();
+            _cts.Cancel();
             try { Client.Close(); } catch { }
             return true;
         }
@@ -46,7 +51,7 @@ namespace ServiceClient
         {
             var pair = new KeyValuePair<string, TcpConnection>(ClientId, this);
             ((ICollection<KeyValuePair<string, TcpConnection>>)Messenger.TcpClients).Remove(pair);
-            try { WriteQueue.CompleteAdding(); } catch (ObjectDisposedException) { }
+            _cts.Cancel();
         }
 
         public void SendData(byte[] data)
@@ -57,17 +62,30 @@ namespace ServiceClient
             }
             else
             {
-                try { WriteQueue.Add(data); } catch (InvalidOperationException) { }
+                if (_cts.IsCancellationRequested) return;
+                _writeQueue.Enqueue(data);
+                _signal.Release();
             }
         }
 
-        public void WriteLoop()
+        // Async producer-consumer pattern (SemaphoreSlim + ConcurrentQueue) replaces
+        // the former BlockingCollection + synchronous WriteLoop. The old loop held a
+        // thread pool thread for the lifetime of every TCP connection, which starved
+        // the pool when many connections were open (e.g. 150 SOCKS-proxied hosts).
+        // .NET Framework 4.7.2 lacks Channel<T> without extra DLLs, so we use the
+        // same primitives the framework's own WebSocketBase uses internally.
+        public async Task WriteLoopAsync()
         {
             try
             {
-                foreach (var d in WriteQueue.GetConsumingEnumerable())
-                    Stream.Write(d, 0, d.Length);
+                while (!_cts.IsCancellationRequested)
+                {
+                    await _signal.WaitAsync(_cts.Token);
+                    while (_writeQueue.TryDequeue(out var d))
+                        await Stream.WriteAsync(d, 0, d.Length);
+                }
             }
+            catch (OperationCanceledException) { }
             catch
             {
                 AbortAndSignal();

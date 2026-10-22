@@ -49,7 +49,7 @@ Options provided to the builder are hardcoded into the source files. The operato
 |-------------------------|----------------|------------------------------------------|
 | `--server-url`          | localhost:8080 | Server URL (protocol sets transport)     |
 | `-e`, `--encryption-key`| (none)        | AES encryption key                       |
-| `--user-agent`          | Chrome 141     | HTTP/WebSocket User-Agent string         |
+| `--user-agent`          | Chrome 141     | HTTP User-Agent string (see note below)  |
 | `--proxy`               | (none)         | HTTP proxy (`http://user:pass@host:port`)|
 
 ### Retry Behavior
@@ -60,6 +60,10 @@ Options provided to the builder are hardcoded into the source files. The operato
 | `--retry-attempts`  | 5       | Number of reconnection attempts       |
 
 Set `--retry-attempts 0` to disable reconnection.
+
+## User-Agent
+
+The `--user-agent` flag sets the User-Agent header for **HTTP transports only**. `ClientWebSocket` on .NET Framework 4.7.2 does not support setting custom User-Agent headers — the `Headers` collection throws on restricted headers. WebSocket connections use the default system User-Agent.
 
 ## Transport Selection
 

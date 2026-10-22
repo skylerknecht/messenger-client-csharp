@@ -60,7 +60,7 @@ namespace ServiceClient
                 return null;
             }
 
-            Task.Run(() => connection.WriteLoop());
+            _ = connection.WriteLoopAsync();
             return connection;
         }
 
