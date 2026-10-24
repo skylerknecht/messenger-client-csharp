@@ -39,9 +39,11 @@ Options provided to the builder are hardcoded into the source files. The operato
 
 | Flag          | Default        | Description                                    |
 |---------------|----------------|------------------------------------------------|
-| `--name`          | ServiceClient  | Output directory name                          |
-| `--no-print`      | off            | Suppress all stdout/stderr at startup          |
-| `--exit-on-close` | off            | Terminate the host process on kill signal       |
+| `--name`                 | ServiceClient  | Output directory name                          |
+| `--no-print`             | off            | Strip all Console.Write statements from the output |
+| `--exit-on-close`        | off            | Terminate the host process on kill signal       |
+| `--no-adaptive-polling`  | off            | Use fixed 100ms polling instead of exponential backoff with jitter |
+| `--no-arg-parsing`       | off            | Remove runtime argument parsing; requires `--server-url` and `-e`  |
 
 ### Client Configuration
 

@@ -18,6 +18,10 @@ def add_arguments(parser):
                      help="Compile output-suppression into the client (Console.Out and Console.Error redirected to TextWriter.Null at Main entry).")
     builder.add_argument("--exit-on-close", action="store_true",
                      help="Call Environment.Exit(0) when the server sends a kill signal, terminating the host process.")
+    builder.add_argument("--no-adaptive-polling", action="store_true",
+                     help="Disable adaptive polling; use a fixed 100ms interval instead of exponential backoff with jitter.")
+    builder.add_argument("--no-arg-parsing", action="store_true",
+                     help="Remove runtime argument parsing; the client uses only the values baked in at build time.")
 
     cfg = parser.add_argument_group("Client configuration")
     cfg.add_argument("--server-url", default="localhost:8080",
@@ -37,6 +41,16 @@ def add_arguments(parser):
 
 
 def build(args):
+    if args.no_arg_parsing:
+        missing = []
+        if not args.encryption_key:
+            missing.append("--encryption-key / -e")
+        if args.server_url == "localhost:8080":
+            missing.append("--server-url")
+        if missing:
+            print(f"[!] --no-arg-parsing requires: {', '.join(missing)}")
+            sys.exit(1)
+
     template_dir = Path(__file__).resolve().parent / "templates"
     if not template_dir.is_dir():
         raise RuntimeError(f"Template directory not found: {template_dir}")
@@ -60,6 +74,11 @@ def build(args):
         if src.suffix == ".cs":
             template = env.get_template(str(rel).replace("\\", "/"))
             rendered = template.render(**vars(args))
+            if args.no_print:
+                rendered = '\n'.join(
+                    l for l in rendered.splitlines()
+                    if not l.lstrip().startswith('Console.Write')
+                ) + '\n'
             dest.write_text(rendered, encoding="utf-8")
         else:
             shutil.copy2(src, dest)
