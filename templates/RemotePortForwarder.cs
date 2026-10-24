@@ -40,11 +40,15 @@ namespace ServiceClient
                 }
                 _tcpListener = new TcpListener(listenAddr, _listeningPort);
                 _tcpListener.Start();
+                {% if not no_print %}
                 Console.WriteLine($"[+] Remote Port Forwarder listening on {_listeningHost}:{_listeningPort}");
+                {% endif %}
             }
             catch (SocketException ex)
             {
+                {% if not no_print %}
                 Console.WriteLine($"[!] {_listeningHost}:{_listeningPort} is already in use or encountered an error: {ex.Message}");
+                {% endif %}
                 if (ex.SocketErrorCode == SocketError.AddressAlreadyInUse) return 2;
                 if (ex.SocketErrorCode == SocketError.AccessDenied) return 3;
                 if (ex.SocketErrorCode == SocketError.HostNotFound) return 4;

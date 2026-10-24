@@ -20,6 +20,7 @@ namespace ServiceClient
 {% if not no_arg_parsing %}
         private static void PrintHelp()
         {
+            {% if not no_print %}
             Console.WriteLine("Usage: ServiceClient [options]");
             Console.WriteLine();
             Console.WriteLine("Options:");
@@ -30,6 +31,7 @@ namespace ServiceClient
             Console.WriteLine("  --retry-duration <secs>    Total time to retry connecting");
             Console.WriteLine("  --retry-attempts <n>       Number of retry attempts");
             Console.WriteLine("  -h, --help                 Show this help message");
+            {% endif %}
         }
 
         private static Dictionary<string, string> ParseArgs(string[] args)
@@ -53,14 +55,18 @@ namespace ServiceClient
                     case "--retry-attempts":
                         if (i + 1 >= args.Length)
                         {
+                            {% if not no_print %}
                             Console.WriteLine($"[!] {args[i]} requires a value.");
+                            {% endif %}
                             break;
                         }
                         var key = args[i].StartsWith("--") ? args[i].Substring(2) : "encryption-key";
                         parsed[key] = args[++i];
                         break;
                     default:
+                        {% if not no_print %}
                         Console.WriteLine($"[!] Could not find argument `{args[i]}`.");
+                        {% endif %}
                         break;
                 }
             }
@@ -80,7 +86,9 @@ namespace ServiceClient
             string encryptionKeyStr = parsed.ContainsKey("encryption-key") && !string.IsNullOrEmpty(parsed["encryption-key"]) ? parsed["encryption-key"] : ENCRYPTION_KEY;
             if (string.IsNullOrEmpty(encryptionKeyStr))
             {
+                {% if not no_print %}
                 Console.WriteLine("[!] No encryption key provided, please specify one with --encryption-key.");
+                {% endif %}
                 return;
             }
             byte[] encryptionKey = Crypto.Hash(encryptionKeyStr);
@@ -101,7 +109,9 @@ namespace ServiceClient
             if (!string.IsNullOrEmpty(proxyStr))
             {
                 proxy = CreateWebProxy(proxyStr);
+                {% if not no_print %}
                 Console.WriteLine($"[*] Using proxy: {proxyStr}");
+                {% endif %}
             }
 
             string uri = serverUrl.Trim('/');
@@ -135,25 +145,35 @@ namespace ServiceClient
                 }
                 else
                 {
+                    {% if not no_print %}
                     Console.WriteLine($"[!] Unsupported scheme: {scheme}");
+                    {% endif %}
                     continue;
                 }
 
+                {% if not no_print %}
                 Console.WriteLine($"[*] Attempting to connect over {scheme.ToUpper()} to {candidateUrl} ({i + 1}/{schemes.Length})");
+                {% endif %}
                 try
                 {
                     await client.ConnectAsync();
+                    {% if not no_print %}
                     Console.WriteLine($"[+] Connected to {candidateUrl}");
+                    {% endif %}
                     break;
                 }
                 catch (DecryptionException)
                 {
+                    {% if not no_print %}
                     Console.WriteLine("[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
+                    {% endif %}
                     return;
                 }
                 catch (Exception ex)
                 {
+                    {% if not no_print %}
                     Console.WriteLine($"[!] Connection failed: {ex.Message}");
+                    {% endif %}
                     client.CloseTransport();
                     client = null;
                     continue;
@@ -162,7 +182,9 @@ namespace ServiceClient
 
             if (client == null)
             {
+                {% if not no_print %}
                 Console.WriteLine("[!] All connection attempts failed.");
+                {% endif %}
                 return;
             }
 
@@ -174,12 +196,16 @@ namespace ServiceClient
                 }
                 catch (DecryptionException)
                 {
+                    {% if not no_print %}
                     Console.WriteLine("[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
+                    {% endif %}
                     return;
                 }
                 catch (Exception ex)
                 {
+                    {% if not no_print %}
                     Console.WriteLine($"[!] Disconnected: {ex.Message}");
+                    {% endif %}
                 }
 
                 if (client.Killed)
@@ -194,7 +220,9 @@ namespace ServiceClient
                 while (consecutiveFailures < retryAttempts)
                 {
                     consecutiveFailures++;
+                    {% if not no_print %}
                     Console.WriteLine($"[*] Attempting to reconnect ({consecutiveFailures}/{retryAttempts})");
+                    {% endif %}
                     await Task.Delay(sleepInterval);
 
                     try
@@ -202,18 +230,24 @@ namespace ServiceClient
                         await client.ConnectAsync();
                         if (client.Killed)
                             break;
+                        {% if not no_print %}
                         Console.WriteLine("[+] Reconnected");
+                        {% endif %}
                         consecutiveFailures = 0;
                         await client.StartAsync();
                     }
                     catch (DecryptionException)
                     {
+                        {% if not no_print %}
                         Console.WriteLine("[!] Decryption failed -- the encryption key is likely incorrect. The messenger cannot decrypt server traffic and is stopping.");
+                        {% endif %}
                         return;
                     }
                     catch (Exception ex)
                     {
+                        {% if not no_print %}
                         Console.WriteLine($"[!] Reconnection failed: {ex.Message}");
+                        {% endif %}
                     }
 
                     if (client.Killed)

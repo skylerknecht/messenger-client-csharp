@@ -15,7 +15,7 @@ def add_arguments(parser):
     builder.add_argument("--name", default="ServiceClient",
                      help="Name of the output directory.")
     builder.add_argument("--no-print", action="store_true",
-                     help="Compile output-suppression into the client (Console.Out and Console.Error redirected to TextWriter.Null at Main entry).")
+                     help="Omit client output statements when rendering the templates.")
     builder.add_argument("--exit-on-close", action="store_true",
                      help="Call Environment.Exit(0) when the server sends a kill signal, terminating the host process.")
     builder.add_argument("--no-adaptive-polling", action="store_true",
@@ -74,11 +74,6 @@ def build(args):
         if src.suffix == ".cs":
             template = env.get_template(str(rel).replace("\\", "/"))
             rendered = template.render(**vars(args))
-            if args.no_print:
-                rendered = '\n'.join(
-                    l for l in rendered.splitlines()
-                    if not l.lstrip().startswith('Console.Write')
-                ) + '\n'
             dest.write_text(rendered, encoding="utf-8")
         else:
             shutil.copy2(src, dest)

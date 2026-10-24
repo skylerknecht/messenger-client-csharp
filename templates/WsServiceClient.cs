@@ -151,7 +151,9 @@ namespace ServiceClient
                         }
                         catch (Exception ex)
                         {
+                            {% if not no_print %}
                             Console.WriteLine($"[!] Error parsing message: {ex.Message}");
+                            {% endif %}
                         }
 
                         if (Killed)
@@ -164,7 +166,9 @@ namespace ServiceClient
                 }
                 catch (Exception ex)
                 {
+                    {% if not no_print %}
                     Console.WriteLine($"[!] Error receiving message: {ex.Message}");
+                    {% endif %}
                     break;
                 }
             }

